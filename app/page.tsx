@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createReportPdf, downloadPdf } from "../lib/report/pdf";
+import { downloadPdf } from "../lib/report/download";
 import type {
   AnalysisValidation,
   MetricKey,
@@ -183,17 +183,16 @@ export default function Home() {
       const approvalPayload = (await approval.json()) as { error?: string };
       if (!approval.ok) throw new Error(approvalPayload.error ?? "A aprovação falhou.");
 
-      const pdf = await createReportPdf(report.snapshot, draft);
       const upload = await fetch(`/api/report-runs/${report.runId}/artifact`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/pdf",
-          "x-report-version-id": report.versionId,
-        },
-        body: pdf,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId: report.versionId }),
       });
-      const uploadPayload = (await upload.json()) as { error?: string };
-      if (!upload.ok) throw new Error(uploadPayload.error ?? "O armazenamento do PDF falhou.");
+      if (!upload.ok) {
+        const uploadPayload = (await upload.json()) as { error?: string };
+        throw new Error(uploadPayload.error ?? "A geração do PDF falhou.");
+      }
+      const pdf = await upload.blob();
       downloadPdf(pdf, reportFilename(report.snapshot.config.clientName));
       setExported(true);
     } catch (reason) {

@@ -235,6 +235,36 @@ export async function getSnapshotForRun(workspaceId: string, runId: string) {
   return JSON.parse(row.snapshotJson) as NormalizedSnapshot;
 }
 
+export async function getApprovedReportForArtifact(
+  workspaceId: string,
+  runId: string,
+  versionId: string,
+) {
+  const db = getDb();
+  const runRows = await db
+    .select()
+    .from(reportRuns)
+    .where(eq(reportRuns.id, runId))
+    .limit(1);
+  const run = runRows[0];
+  if (!run || run.workspaceId !== workspaceId) {
+    throw new Error("Execução não encontrada neste workspace.");
+  }
+  const versionRows = await db
+    .select()
+    .from(reportVersions)
+    .where(eq(reportVersions.id, versionId))
+    .limit(1);
+  const version = versionRows[0];
+  if (!version || version.reportRunId !== runId || version.status !== "approved") {
+    throw new Error("Somente uma versão aprovada pode gerar o PDF.");
+  }
+  return {
+    snapshot: await getSnapshotForRun(workspaceId, runId),
+    analysis: JSON.parse(version.contentJson) as ReportAnalysis,
+  };
+}
+
 export async function storeArtifactMetadata(
   identity: ReportRunIdentity,
   versionId: string,
@@ -245,16 +275,22 @@ export async function storeArtifactMetadata(
   const db = getDb();
   const timestamp = now();
   await db.batch([
-    db.insert(reportArtifacts).values({
-      id: crypto.randomUUID(),
-      reportRunId: identity.runId,
-      reportVersionId: versionId,
-      objectKey,
-      contentType: "application/pdf",
-      sizeBytes,
-      checksum,
-      createdAt: timestamp,
-    }),
+    db
+      .insert(reportArtifacts)
+      .values({
+        id: crypto.randomUUID(),
+        reportRunId: identity.runId,
+        reportVersionId: versionId,
+        objectKey,
+        contentType: "application/pdf",
+        sizeBytes,
+        checksum,
+        createdAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: reportArtifacts.reportVersionId,
+        set: { objectKey, sizeBytes, checksum, createdAt: timestamp },
+      }),
     db.insert(auditLogs).values({
       id: crypto.randomUUID(),
       workspaceId: identity.workspaceId,
