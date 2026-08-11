@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786472400000,
+      "tag": "0000_washington_p0",
+      "breakpoints": true
+    }
+  ]
 }

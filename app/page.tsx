@@ -1,376 +1,286 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { createReportPdf, downloadPdf } from "../lib/report/pdf";
+import type {
+  AnalysisValidation,
+  MetricKey,
+  NormalizedSnapshot,
+  ReportAnalysis,
+  ReportFocus,
+  ReportObjective,
+  ReportTone,
+} from "../lib/report/types";
 
-type Objective = "ecommerce" | "leads";
-type PreviewTab = "resumo" | "campanhas" | "acoes";
+type PreviewTab = "resumo" | "indicadores" | "campanhas" | "acoes" | "metodologia";
+type Account = { id: string; name: string; currency: string; timezone: string };
 
-const ecommerceMetrics = [
-  { label: "Investimento", value: "R$ 48,2 mil", delta: "+12,4%", tone: "positive" },
-  { label: "Receita atribuída", value: "R$ 178,5 mil", delta: "+18,9%", tone: "positive" },
-  { label: "ROAS", value: "3,70", delta: "+5,8%", tone: "positive" },
-  { label: "Custo por compra", value: "R$ 77,54", delta: "+2,5%", tone: "attention" },
+interface ReportRunResponse {
+  runId: string;
+  versionId: string;
+  mode: "demo_without_llm" | "real_with_llm";
+  source: string;
+  snapshot: NormalizedSnapshot;
+  analysis: ReportAnalysis;
+  validation: AnalysisValidation;
+  attempts: number;
+  model: string;
+}
+
+const tabs: Array<{ id: PreviewTab; label: string; page: number }> = [
+  { id: "resumo", label: "Resumo", page: 1 },
+  { id: "indicadores", label: "Indicadores", page: 2 },
+  { id: "campanhas", label: "Campanhas", page: 3 },
+  { id: "acoes", label: "Ações", page: 4 },
+  { id: "metodologia", label: "Metodologia", page: 5 },
 ];
 
-const leadMetrics = [
-  { label: "Investimento", value: "R$ 21,8 mil", delta: "+8,1%", tone: "positive" },
-  { label: "Leads", value: "684", delta: "+14,7%", tone: "positive" },
-  { label: "Custo por lead", value: "R$ 31,87", delta: "-5,8%", tone: "positive" },
-  { label: "CTR do link", value: "1,92%", delta: "+0,18 pp", tone: "positive" },
-];
+function previousEquivalent(start: string, end: string) {
+  const startDate = new Date(`${start}T12:00:00Z`);
+  const endDate = new Date(`${end}T12:00:00Z`);
+  const duration = endDate.getTime() - startDate.getTime();
+  const previousEnd = new Date(startDate.getTime() - 86_400_000);
+  const previousStart = new Date(previousEnd.getTime() - duration);
+  return {
+    start: previousStart.toISOString().slice(0, 10),
+    end: previousEnd.toISOString().slice(0, 10),
+  };
+}
 
-const campaignRows = [
-  { name: "Advantage+ Shopping", spend: "R$ 18,4 mil", result: "R$ 78,4 mil", efficiency: "4,25", status: "Destaque" },
-  { name: "Remarketing 30d", spend: "R$ 8,1 mil", result: "R$ 35,3 mil", efficiency: "4,35", status: "Destaque" },
-  { name: "Prospecting Video", spend: "R$ 12,8 mil", result: "R$ 37,5 mil", efficiency: "2,94", status: "Atenção" },
-];
+function centralMetricRefs(objective: ReportObjective): MetricKey[] {
+  return objective === "ecommerce"
+    ? ["spend", "purchaseValue", "roas", "costPerPurchase"]
+    : ["spend", "leads", "costPerLead", "ctr"];
+}
 
-const actions = [
-  {
-    title: "Proteger o ganho de eficiência",
-    detail: "Manter Advantage+ como principal motor e avaliar uma realocação gradual de até 10% da verba.",
-    impact: "Alto",
-  },
-  {
-    title: "Renovar a prospecção",
-    detail: "Revisar criativos das campanhas com custo acima da meta antes de ampliar investimento.",
-    impact: "Alto",
-  },
-  {
-    title: "Validar o valor dos pedidos",
-    detail: "Confirmar ticket médio e atribuição antes de tratar o crescimento como tendência consolidada.",
-    impact: "Médio",
-  },
-];
+function reportFilename(clientName: string) {
+  const safe = clientName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+  return `projeto-washington-${safe || "relatorio"}.pdf`;
+}
 
 export default function Home() {
-  const [objective, setObjective] = useState<Objective>("ecommerce");
+  const [objective, setObjective] = useState<ReportObjective>("ecommerce");
   const [tab, setTab] = useState<PreviewTab>("resumo");
-  const [generated, setGenerated] = useState(false);
-  const [exported, setExported] = useState(false);
+  const [demo, setDemo] = useState(true);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountId, setAccountId] = useState("");
   const [clientName, setClientName] = useState("Loja Aurora");
+  const [periodStart, setPeriodStart] = useState("2026-07-01");
+  const [periodEnd, setPeriodEnd] = useState("2026-07-31");
+  const [compare, setCompare] = useState(true);
+  const [tone, setTone] = useState<ReportTone>("executivo");
+  const [focus, setFocus] = useState<ReportFocus>("geral");
+  const [context, setContext] = useState("");
+  const [report, setReport] = useState<ReportRunResponse | null>(null);
+  const [draft, setDraft] = useState<ReportAnalysis | null>(null);
+  const [busy, setBusy] = useState<"accounts" | "generating" | "approving" | null>(null);
+  const [error, setError] = useState("");
+  const [exported, setExported] = useState(false);
 
-  const metrics = objective === "ecommerce" ? ecommerceMetrics : leadMetrics;
-  const objectiveLabel = objective === "ecommerce" ? "E-commerce" : "Geração de leads";
+  useEffect(() => {
+    let active = true;
+    Promise.resolve()
+      .then(() => {
+        if (!active) return;
+        setBusy("accounts");
+        setError("");
+        return fetch(`/api/meta/accounts${demo ? "?demo=1" : ""}`);
+      })
+      .then(async (response) => {
+        if (!response) return [];
+        const payload = (await response.json()) as { accounts?: Account[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? "Não foi possível listar as contas.");
+        return payload.accounts ?? [];
+      })
+      .then((items) => {
+        if (!active) return;
+        setAccounts(items);
+        setAccountId(items[0]?.id ?? "");
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setAccounts([]);
+          setAccountId("");
+          setError(reason instanceof Error ? reason.message : "Não foi possível listar as contas.");
+        }
+      })
+      .finally(() => active && setBusy(null));
+    return () => {
+      active = false;
+    };
+  }, [demo]);
 
-  const summary = useMemo(() => {
-    if (objective === "leads") {
-      return "O volume de leads cresceu acima do investimento e reduziu o CPL. A próxima ação é validar qualidade comercial antes de aumentar a verba.";
-    }
-    return "A receita cresceu acima do investimento e elevou o ROAS para 3,70. O ganho veio de Advantage+ e remarketing, enquanto a prospecção pede revisão criativa.";
-  }, [objective]);
-
-  function handleGenerate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setGenerated(true);
-    setExported(false);
-    setTab("resumo");
+  function chooseObjective(nextObjective: ReportObjective) {
+    setObjective(nextObjective);
+    if (!demo) return;
+    const preferred = nextObjective === "ecommerce" ? accounts[0] : accounts[1] ?? accounts[0];
+    if (preferred) setAccountId(preferred.id);
+    setClientName(nextObjective === "ecommerce" ? "Loja Aurora" : "Clínica Horizonte");
   }
 
-  function handleExport() {
-    setExported(true);
+  const selectedAccount = accounts.find((account) => account.id === accountId) ?? accounts[0];
+  const objectiveLabel = objective === "ecommerce" ? "E-commerce" : "Geração de leads";
+  const currentPage = tabs.find((item) => item.id === tab)?.page ?? 1;
+  const metrics = useMemo(() => {
+    if (!report) return [];
+    return centralMetricRefs(report.snapshot.config.objective).map(
+      (key) => report.snapshot.evidence[`account.${key}`],
+    );
+  }, [report]);
+
+  async function handleGenerate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedAccount) return setError("Selecione uma conta de anúncios.");
+    setBusy("generating");
+    setError("");
+    setExported(false);
+    try {
+      const response = await fetch("/api/report-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          demo,
+          clientId: clientName.toLowerCase().replace(/\W+/g, "_") || "cliente",
+          clientName,
+          accountId: selectedAccount.id,
+          accountName: selectedAccount.name,
+          objective,
+          period: { start: periodStart, end: periodEnd },
+          comparisonPeriod: compare ? previousEquivalent(periodStart, periodEnd) : null,
+          tone,
+          focus,
+          context,
+          goals: {},
+        }),
+      });
+      const payload = (await response.json()) as ReportRunResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Não foi possível gerar o relatório.");
+      setReport(payload);
+      setDraft(structuredClone(payload.analysis));
+      setTab("resumo");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível gerar o relatório.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approveAndExport() {
+    if (!report || !draft) return;
+    setBusy("approving");
+    setError("");
+    try {
+      const approval = await fetch(`/api/report-runs/${report.runId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId: report.versionId, analysis: draft }),
+      });
+      const approvalPayload = (await approval.json()) as { error?: string };
+      if (!approval.ok) throw new Error(approvalPayload.error ?? "A aprovação falhou.");
+
+      const pdf = await createReportPdf(report.snapshot, draft);
+      const upload = await fetch(`/api/report-runs/${report.runId}/artifact`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/pdf",
+          "x-report-version-id": report.versionId,
+        },
+        body: pdf,
+      });
+      const uploadPayload = (await upload.json()) as { error?: string };
+      if (!upload.ok) throw new Error(uploadPayload.error ?? "O armazenamento do PDF falhou.");
+      downloadPdf(pdf, reportFilename(report.snapshot.config.clientName));
+      setExported(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Não foi possível aprovar e gerar o PDF.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function updateSummary(value: string) {
+    setDraft((current) => (current ? { ...current, executiveSummary: value } : current));
+  }
+
+  function updateRecommendation(index: number, action: string) {
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        recommendations: current.recommendations.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, action } : item,
+        ),
+      };
+    });
   }
 
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Navegação principal">
-        <div className="brand">
-          <span className="brand-dot" aria-hidden="true" />
-          <span>Projeto Washington</span>
-        </div>
-
+        <div className="brand"><span className="brand-dot" aria-hidden="true" /><span>Projeto Washington</span></div>
         <nav className="nav-list">
-          <button className="nav-item active" type="button">
-            <span className="nav-symbol">⌁</span>
-            Novo relatório
-          </button>
-          <button className="nav-item" type="button">
-            <span className="nav-symbol">▦</span>
-            Histórico
-          </button>
-          <button className="nav-item" type="button">
-            <span className="nav-symbol">◎</span>
-            Clientes e contas
-          </button>
+          <button className="nav-item active" type="button"><span className="nav-symbol">⌁</span>Novo relatório</button>
+          <button className="nav-item" type="button"><span className="nav-symbol">▦</span>Histórico</button>
+          <button className="nav-item" type="button"><span className="nav-symbol">◎</span>Clientes e contas</button>
         </nav>
-
         <div className="connection-card">
-          <div className="connection-heading">
-            <span className="status-dot" aria-hidden="true" />
-            Meta conectado
-          </div>
-          <p>3 de até 20 contas</p>
-          <button type="button">Gerenciar conexão</button>
+          <div className="connection-heading"><span className={`status-dot ${demo ? "demo" : ""}`} aria-hidden="true" />{demo ? "Demonstração ativa" : "Conexão real"}</div>
+          <p>{accounts.length} conta(s) disponível(is)</p>
+          <button type="button" onClick={() => setDemo((value) => !value)}>{demo ? "Usar Meta + LLM" : "Voltar à demonstração"}</button>
         </div>
-
-        <div className="user-card">
-          <div className="avatar">SZ</div>
-          <div>
-            <strong>Stênio</strong>
-            <span>Sessão de demonstração</span>
-          </div>
-        </div>
+        <div className="user-card"><div className="avatar">PW</div><div><strong>Equipe interna</strong><span>Ambiente privado</span></div></div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">RELATÓRIOS META ADS</p>
-            <h1>Novo relatório</h1>
-            <p className="subtitle">Configure a análise e revise o texto antes de gerar o PDF.</p>
-          </div>
+          <div><p className="eyebrow">RELATÓRIOS META ADS</p><h1>Novo relatório</h1><p className="subtitle">Extração, métricas determinísticas, análise validada e PDF em cinco páginas.</p></div>
           <div className="topbar-actions">
-            <span className="demo-badge">Dados simulados</span>
-            <button className="secondary-button" type="button">Salvar modelo</button>
+            <span className={`demo-badge ${demo ? "" : "real"}`}>{demo ? "Demonstração • sem chamada à LLM" : "Meta real • análise por LLM"}</span>
           </div>
         </header>
 
+        {error && <div className="error-banner" role="alert"><strong>Não foi possível concluir.</strong><span>{error}</span></div>}
+
         <div className="content-grid">
           <form className="config-panel glass-panel" onSubmit={handleGenerate}>
-            <div className="panel-heading">
-              <div>
-                <span className="step">01</span>
-                <h2>Configuração</h2>
-              </div>
-              <span className="required-note">* obrigatório</span>
-            </div>
-
-            <label>
-              Cliente
-              <select value={clientName} onChange={(event) => setClientName(event.target.value)}>
-                <option>Loja Aurora</option>
-                <option>Clínica Horizonte</option>
-                <option>Instituto Nexo</option>
-              </select>
-            </label>
-
-            <label>
-              Conta de anúncios
-              <select>
-                <option>Loja Aurora — act_2094•••108</option>
-                <option>Conta principal — act_4851•••322</option>
-              </select>
-            </label>
-
-            <fieldset>
-              <legend>Objetivo</legend>
-              <div className="segmented-control">
-                <button
-                  type="button"
-                  className={objective === "ecommerce" ? "selected" : ""}
-                  onClick={() => setObjective("ecommerce")}
-                >
-                  E-commerce
-                </button>
-                <button
-                  type="button"
-                  className={objective === "leads" ? "selected" : ""}
-                  onClick={() => setObjective("leads")}
-                >
-                  Leads
-                </button>
-              </div>
-            </fieldset>
-
-            <div className="date-grid">
-              <label>
-                Data inicial *
-                <input type="date" defaultValue="2026-07-01" required />
-              </label>
-              <label>
-                Data final *
-                <input type="date" defaultValue="2026-07-31" required />
-              </label>
-            </div>
-
-            <label className="checkbox-row">
-              <input type="checkbox" defaultChecked />
-              <span>
-                Comparar com período anterior equivalente
-                <small>01–30 jun 2026</small>
-              </span>
-            </label>
-
-            <div className="field-grid">
-              <label>
-                Tom
-                <select defaultValue="executivo">
-                  <option value="executivo">Executivo</option>
-                  <option value="consultivo">Consultivo</option>
-                  <option value="direto">Direto</option>
-                </select>
-              </label>
-              <label>
-                Foco
-                <select defaultValue="geral">
-                  <option value="geral">Visão geral</option>
-                  <option value="eficiencia">Eficiência</option>
-                  <option value="escala">Escala</option>
-                  <option value="criativos">Criativos</option>
-                </select>
-              </label>
-            </div>
-
-            <label>
-              Contexto de outras fontes <span className="optional">opcional</span>
-              <textarea
-                rows={3}
-                placeholder="Ex.: Google Ads ativo, promoção no período, CRM mostra queda na qualidade dos leads..."
-              />
-            </label>
-
-            <div className="attribution-note">
-              <span>i</span>
-              <p><strong>Atribuição da conta:</strong> 7 dias após clique e 1 dia após visualização. Ela será exibida e poderá ser questionada na análise.</p>
-            </div>
-
-            <button className="primary-button" type="submit">
-              {generated ? "Gerar novamente" : "Gerar relatório"}
-              <span aria-hidden="true">→</span>
-            </button>
+            <div className="panel-heading"><div><span className="step">01</span><h2>Configuração</h2></div><span className="required-note">* obrigatório</span></div>
+            <label>Cliente<input value={clientName} onChange={(event) => setClientName(event.target.value)} required /></label>
+            <label>Conta de anúncios<select value={accountId} onChange={(event) => setAccountId(event.target.value)} disabled={busy === "accounts" || accounts.length === 0}>{accounts.length === 0 && <option value="">Nenhuma conta disponível</option>}{accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+            <fieldset><legend>Objetivo</legend><div className="segmented-control"><button type="button" className={objective === "ecommerce" ? "selected" : ""} onClick={() => chooseObjective("ecommerce")}>E-commerce</button><button type="button" className={objective === "leads" ? "selected" : ""} onClick={() => chooseObjective("leads")}>Leads</button></div></fieldset>
+            <div className="date-grid"><label>Data inicial *<input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} required /></label><label>Data final *<input type="date" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} required /></label></div>
+            <label className="checkbox-row"><input type="checkbox" checked={compare} onChange={(event) => setCompare(event.target.checked)} /><span>Comparar com período anterior equivalente<small>{compare ? `${previousEquivalent(periodStart, periodEnd).start} a ${previousEquivalent(periodStart, periodEnd).end}` : "Comparação desativada"}</small></span></label>
+            <div className="field-grid"><label>Tom<select value={tone} onChange={(event) => setTone(event.target.value as ReportTone)}><option value="executivo">Executivo</option><option value="consultivo">Consultivo</option><option value="direto">Direto</option></select></label><label>Foco<select value={focus} onChange={(event) => setFocus(event.target.value as ReportFocus)}><option value="geral">Visão geral</option><option value="eficiencia">Eficiência</option><option value="escala">Escala</option><option value="criativos">Criativos</option></select></label></div>
+            <label>Contexto de outras fontes <span className="optional">opcional</span><textarea rows={3} value={context} onChange={(event) => setContext(event.target.value)} placeholder="Ex.: promoção no período, CRM mostra queda na qualidade dos leads..." /></label>
+            <div className="attribution-note"><span>i</span><p><strong>Somente leitura:</strong> o sistema consulta dados, mas não altera campanhas. A janela de atribuição será capturada e exibida no relatório.</p></div>
+            <button className="primary-button" type="submit" disabled={Boolean(busy) || !selectedAccount}>{busy === "generating" ? "Extraindo e analisando..." : report ? "Gerar novamente" : "Gerar relatório"}<span aria-hidden="true">→</span></button>
           </form>
 
           <section className="preview-panel glass-panel" aria-label="Prévia do relatório">
-            <div className="panel-heading preview-heading">
-              <div>
-                <span className="step">02</span>
-                <h2>Prévia do output</h2>
-              </div>
-              <span className={`run-status ${generated ? "ready" : ""}`}>
-                {generated ? "Atualizado agora" : "Exemplo preenchido"}
-              </span>
-            </div>
+            <div className="panel-heading preview-heading"><div><span className="step">02</span><h2>Prévia do output</h2></div><span className={`run-status ${report ? "ready" : ""}`}>{report ? `Validado • ${report.snapshot.quality.score}%` : "Aguardando geração"}</span></div>
+            <div className="report-toolbar"><div className="preview-tabs" role="tablist" aria-label="Seções do relatório">{tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}</div><span>Página {currentPage} de 5</span></div>
 
-            <div className="report-toolbar">
-              <div className="preview-tabs" role="tablist" aria-label="Seções do relatório">
-                {(["resumo", "campanhas", "acoes"] as PreviewTab[]).map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === item}
-                    className={tab === item ? "active" : ""}
-                    onClick={() => setTab(item)}
-                  >
-                    {item === "resumo" ? "Resumo" : item === "campanhas" ? "Campanhas" : "Ações"}
-                  </button>
-                ))}
-              </div>
-              <span>Página {tab === "resumo" ? "1" : tab === "campanhas" ? "3" : "4"} de 5</span>
-            </div>
+            {!report || !draft ? (
+              <article className="report-sheet empty-report"><div><span className="empty-mark">W</span><h3>Configure e gere o primeiro relatório</h3><p>Os números serão calculados antes da análise. Qualquer divergência da LLM será bloqueada antes da revisão.</p></div></article>
+            ) : (
+              <article className="report-sheet">
+                <div className="report-header"><div className="mini-brand"><span /> PROJETO WASHINGTON</div><span>{objectiveLabel}</span></div>
+                {tab === "resumo" && <><div className="report-title-row"><div><p>RELATÓRIO DE PERFORMANCE</p><h3>{report.snapshot.config.clientName}</h3><span>{report.snapshot.config.period.start}–{report.snapshot.config.period.end} vs. período anterior</span></div><span className="quality-score">Qualidade dos dados: {report.snapshot.quality.score}%</span></div><div className="executive-summary"><span>LEITURA EXECUTIVA • EDITÁVEL</span><textarea value={draft.executiveSummary} onChange={(event) => updateSummary(event.target.value)} /></div><div className="metric-grid">{metrics.map((metric) => <div className="metric-card" key={metric.ref}><span>{metric.label}</span><strong>{metric.formattedCurrent}</strong><small className={metric.percentChange !== null && metric.percentChange < 0 ? "attention" : "positive"}>{metric.formattedPercentChange}</small></div>)}</div><div className="evidence-strip"><div><span>Fato</span><p>{draft.facts[0]?.text}</p></div><div><span>Hipótese</span><p>{draft.hypotheses[0]?.text}</p></div><div><span>Validação</span><p>{draft.hypotheses[0]?.validation}</p></div></div></>}
+                {tab === "indicadores" && <div className="report-section"><p className="section-kicker">INDICADORES</p><h3>O que mudou nos números</h3><div className="claim-list">{draft.facts.map((fact) => <div key={fact.text}><span>Fato</span><p>{fact.text}</p></div>)}{draft.interpretations.map((item) => <div key={item.text}><span>Leitura</span><p>{item.text}</p></div>)}</div></div>}
+                {tab === "campanhas" && <div className="report-section"><p className="section-kicker">DISTRIBUIÇÃO</p><h3>Onde o resultado foi produzido</h3><p className="section-intro">Somente campanhas com contribuição, investimento ou comportamento relevante.</p><div className="campaign-table"><div className="campaign-row table-head"><span>Campanha</span><span>Investimento</span><span>Resultado</span><span>Classificação</span></div>{report.snapshot.campaigns.slice(0, 6).map((campaign) => { const resultRef = report.snapshot.config.objective === "ecommerce" ? `campaign.${campaign.id}.purchaseValue` : `campaign.${campaign.id}.leads`; return <div className="campaign-row" key={campaign.id}><span><strong>{campaign.name}</strong><small>{Math.round((campaign.shareOfSpend ?? 0) * 100)}% da verba</small></span><span>{report.snapshot.evidence[`campaign.${campaign.id}.spend`].formattedCurrent}</span><span>{report.snapshot.evidence[resultRef].formattedCurrent}</span><span className={campaign.classification === "attention" ? "attention" : campaign.classification === "highlight" ? "positive" : ""}>{campaign.classification.replaceAll("_", " ")}</span></div>; })}</div><div className="editor-note">{draft.campaignHighlights.map((item) => item.text).join(" ")}</div></div>}
+                {tab === "acoes" && <div className="report-section"><p className="section-kicker">PRIORIDADES</p><h3>Até três ações para avaliar</h3><p className="section-intro">Recomendações baseadas nos dados. Nenhuma alteração foi executada na conta.</p><div className="action-list">{draft.recommendations.map((action, index) => <div className="action-card" key={`${action.priority}-${index}`}><span className="action-number">{index + 1}</span><div><textarea value={action.action} onChange={(event) => updateRecommendation(index, event.target.value)} /><p>{action.rationale}</p><small>Risco: {action.risk}</small></div><span className={`impact ${action.priority === "media" ? "medium" : ""}`}>{action.priority}</span></div>)}</div></div>}
+                {tab === "metodologia" && <div className="report-section"><p className="section-kicker">METODOLOGIA</p><h3>Até onde confiar nesta leitura</h3><div className="method-grid"><div><span>Fonte</span><strong>{report.source}</strong></div><div><span>Atribuição</span><strong>{report.snapshot.account.attribution.description}</strong></div><div><span>Moeda e fuso</span><strong>{report.snapshot.account.currency} • {report.snapshot.account.timezone}</strong></div><div><span>Validação</span><strong>{report.validation.checkedEvidenceRefs.length} referências verificadas</strong></div></div><div className="limitations"><strong>Limitações</strong>{draft.limitations.map((item) => <p key={item}>• {item}</p>)}</div></div>}
+                <footer className="report-footer"><span>{report.mode === "real_with_llm" ? `Análise ${report.model}` : "Análise de referência sem LLM"}</span><span>Snapshot {report.snapshot.sourceHash.slice(0, 10)}</span></footer>
+              </article>
+            )}
 
-            <article className="report-sheet">
-              <div className="report-header">
-                <div className="mini-brand"><span /> PROJETO WASHINGTON</div>
-                <span>{objectiveLabel}</span>
-              </div>
-
-              {tab === "resumo" && (
-                <>
-                  <div className="report-title-row">
-                    <div>
-                      <p>RELATÓRIO DE PERFORMANCE</p>
-                      <h3>{clientName}</h3>
-                      <span>01–31 jul 2026 vs. período anterior</span>
-                    </div>
-                    <span className="quality-score">Qualidade dos dados: 92%</span>
-                  </div>
-
-                  <div className="executive-summary">
-                    <span>LEITURA EXECUTIVA</span>
-                    <p contentEditable suppressContentEditableWarning>{summary}</p>
-                  </div>
-
-                  <div className="metric-grid">
-                    {metrics.map((metric) => (
-                      <div className="metric-card" key={metric.label}>
-                        <span>{metric.label}</span>
-                        <strong>{metric.value}</strong>
-                        <small className={metric.tone}>{metric.delta}</small>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="evidence-strip">
-                    <div><span>Fato</span><p>O resultado cresceu acima do investimento.</p></div>
-                    <div><span>Hipótese</span><p>O mix de campanhas pode explicar o ganho.</p></div>
-                    <div><span>Validação</span><p>Conferir estabilidade e contexto de outras fontes.</p></div>
-                  </div>
-                </>
-              )}
-
-              {tab === "campanhas" && (
-                <div className="report-section">
-                  <p className="section-kicker">DISTRIBUIÇÃO</p>
-                  <h3>Onde o resultado foi produzido</h3>
-                  <p className="section-intro">A leitura prioriza campanhas com volume relevante, melhores resultados e exceções que exigem atenção.</p>
-                  <div className="campaign-table">
-                    <div className="campaign-row table-head">
-                      <span>Campanha</span><span>Investimento</span><span>Resultado</span><span>Eficiência</span>
-                    </div>
-                    {campaignRows.map((row) => (
-                      <div className="campaign-row" key={row.name}>
-                        <span><strong>{row.name}</strong><small>{row.status}</small></span>
-                        <span>{row.spend}</span><span>{row.result}</span><span className={row.status === "Atenção" ? "attention" : "positive"}>{row.efficiency}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="editor-note" contentEditable suppressContentEditableWarning>
-                    Advantage+ e remarketing concentram o ganho. Prospecting Video mantém volume, mas opera abaixo da eficiência média da conta.
-                  </div>
-                </div>
-              )}
-
-              {tab === "acoes" && (
-                <div className="report-section">
-                  <p className="section-kicker">PRIORIDADES</p>
-                  <h3>Três ações simples para avaliar</h3>
-                  <p className="section-intro">Recomendações baseadas nos dados. Nenhuma alteração foi executada na conta.</p>
-                  <div className="action-list">
-                    {actions.map((action, index) => (
-                      <div className="action-card" key={action.title}>
-                        <span className="action-number">{index + 1}</span>
-                        <div contentEditable suppressContentEditableWarning>
-                          <strong>{action.title}</strong>
-                          <p>{action.detail}</p>
-                        </div>
-                        <span className={`impact ${action.impact === "Médio" ? "medium" : ""}`}>{action.impact}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <footer className="report-footer">
-                <span>Dados simulados para protótipo</span>
-                <span>Meta Ads • BRL • GMT-3</span>
-              </footer>
-            </article>
-
-            <div className="preview-actions">
-              <div>
-                <span className="lock-icon" aria-hidden="true">◇</span>
-                <p><strong>Texto editável</strong><small>Métricas permanecem bloqueadas.</small></p>
-              </div>
-              <button className="secondary-button" type="button">Salvar rascunho</button>
-              <button className="primary-button compact" type="button" onClick={handleExport}>
-                {exported ? "PDF pronto" : "Aprovar e gerar PDF"}
-              </button>
-            </div>
+            <div className="preview-actions"><div><span className="lock-icon" aria-hidden="true">◇</span><p><strong>Texto editável</strong><small>Métricas permanecem bloqueadas.</small></p></div><button className="primary-button compact" type="button" onClick={approveAndExport} disabled={!report || busy === "approving"}>{busy === "approving" ? "Validando e gerando..." : exported ? "PDF armazenado" : "Aprovar e gerar PDF"}</button></div>
           </section>
         </div>
-
-        <section className="recent-section">
-          <div>
-            <p className="eyebrow">ÚLTIMAS EXECUÇÕES</p>
-            <h2>Relatórios recentes</h2>
-          </div>
-          <div className="recent-list">
-            <div><span className="client-initial">LA</span><p><strong>Loja Aurora</strong><small>E-commerce • 01–31 jul</small></p><span className="status-pill">Aprovado</span></div>
-            <div><span className="client-initial">CH</span><p><strong>Clínica Horizonte</strong><small>Leads • 15–31 jul</small></p><span className="status-pill draft">Rascunho</span></div>
-            <div><span className="client-initial">IN</span><p><strong>Instituto Nexo</strong><small>Leads • 01–30 jun</small></p><span className="status-pill">Exportado</span></div>
-          </div>
-        </section>
       </section>
     </main>
   );
