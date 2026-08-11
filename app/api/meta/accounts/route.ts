@@ -23,7 +23,7 @@ export async function GET(request: Request) {
           mcpEndpoint:
             typeof runtime.META_MCP_ENDPOINT === "string"
               ? runtime.META_MCP_ENDPOINT
-              : "https://mcp.facebook.com/ads",
+              : undefined,
           mcpListAccountsTool:
             typeof runtime.META_MCP_LIST_ACCOUNTS_TOOL === "string"
               ? runtime.META_MCP_LIST_ACCOUNTS_TOOL

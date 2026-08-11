@@ -105,7 +105,7 @@ export async function POST(request: Request) {
           provider: configuredMetaProvider,
           accessToken: runtimeString(runtime, "META_ACCESS_TOKEN"),
           graphApiVersion: runtimeString(runtime, "META_GRAPH_API_VERSION"),
-          mcpEndpoint: runtimeString(runtime, "META_MCP_ENDPOINT") ?? "https://mcp.facebook.com/ads",
+          mcpEndpoint: runtimeString(runtime, "META_MCP_ENDPOINT"),
           mcpListAccountsTool: runtimeString(runtime, "META_MCP_LIST_ACCOUNTS_TOOL"),
           mcpInsightsTool: runtimeString(runtime, "META_MCP_INSIGHTS_TOOL"),
         });
