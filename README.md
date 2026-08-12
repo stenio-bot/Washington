@@ -1,4 +1,10 @@
-# vinext-starter
+# Projeto Washington
+
+Interface privada para transformar dados do Meta Ads em relatórios executivos de texto e PDF, com cálculo determinístico, análise por LLM, validação factual e aprovação humana.
+
+As regras de linguagem e estrutura estão em `docs/OUTPUT-CONTRACT.md`. A ativação com contas reais está em `docs/ATIVACAO-P0.md`.
+
+## Desenvolvimento local
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

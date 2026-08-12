@@ -49,6 +49,8 @@ Para cada conta, registrar:
 - período atual e período comparado;
 - pessoa responsável pela conferência.
 
+Antes do piloto, alinhar front-end, back-end e prompt ao contrato em `docs/OUTPUT-CONTRACT.md`.
+
 ## 4. Régua de reconciliação
 
 Comparar o snapshot do Projeto Washington com uma visualização salva ou exportação do Gerenciador de Anúncios usando exatamente o mesmo período, fuso, atribuição e nível de agregação.

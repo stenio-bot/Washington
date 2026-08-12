@@ -10,7 +10,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run test:core && npm run build",
-    "test:core": "tsx --test tests/core/analysis.test.ts && tsx --test tests/core/llm-provider.test.ts && tsx --test tests/core/mcp.test.ts && tsx --test tests/core/meta-api.test.ts && tsx --test tests/core/metrics.test.ts && tsx --test tests/core/pdf.test.ts",
+    "test:core": "tsx --test tests/core/analysis.test.ts && tsx --test tests/core/llm-provider.test.ts && tsx --test tests/core/mcp.test.ts && tsx --test tests/core/meta-api.test.ts && tsx --test tests/core/metrics.test.ts && tsx --test tests/core/performance.test.ts && tsx --test tests/core/pdf.test.ts",
     "qa:pdf": "tsx scripts/generate-pdf-sample.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

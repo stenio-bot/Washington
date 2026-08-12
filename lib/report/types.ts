@@ -2,6 +2,15 @@ export type ReportObjective = "ecommerce" | "leads";
 export type DataSource = "fixture" | "meta_mcp" | "marketing_api";
 export type ReportTone = "executivo" | "consultivo" | "direto";
 export type ReportFocus = "geral" | "eficiencia" | "escala" | "criativos";
+export type ReportAudience = "client" | "internal";
+export type PerformanceStatus =
+  | "critical"
+  | "attention"
+  | "recovery"
+  | "stable"
+  | "strong"
+  | "inconclusive";
+export type PerformanceStatusSelection = "auto" | Exclude<PerformanceStatus, "inconclusive">;
 
 export interface DateRange {
   start: string;
@@ -43,7 +52,13 @@ export interface ReportConfig {
   comparisonPeriod: DateRange | null;
   tone: ReportTone;
   focus: ReportFocus;
+  audience: ReportAudience;
+  performanceStatus: PerformanceStatusSelection;
   context: string;
+  actionsTaken: string;
+  nextSteps: string;
+  pendingInputs: string;
+  nextReviewDate: string;
   goals: Partial<Record<MetricKey, number>>;
 }
 
@@ -135,6 +150,21 @@ export interface EvidenceMetric {
   formattedPercentChange: string;
 }
 
+export interface ContextEvidence {
+  ref: string;
+  label: string;
+  text: string;
+  source: "operator";
+}
+
+export interface PerformanceAssessment {
+  status: PerformanceStatus;
+  source: "automatic" | "manual";
+  label: string;
+  rationale: string;
+  evidenceRefs: string[];
+}
+
 export interface NormalizedSnapshot {
   id: string;
   source: DataSource;
@@ -147,6 +177,8 @@ export interface NormalizedSnapshot {
   comparisons: Record<MetricKey, MetricComparison>;
   campaigns: CampaignMetricSummary[];
   evidence: Record<string, EvidenceMetric>;
+  contextEvidence: Record<string, ContextEvidence>;
+  performance: PerformanceAssessment;
   quality: {
     score: number;
     status: "ready" | "partial" | "blocked";
@@ -174,7 +206,34 @@ export interface AnalysisRecommendation {
   validation: string;
 }
 
+export type OperationalStatus =
+  | "aplicado"
+  | "em_andamento"
+  | "planejado"
+  | "recomendado"
+  | "a_confirmar";
+
+export interface OperationalUpdate {
+  title: string;
+  status: OperationalStatus;
+  detail: string;
+  evidenceRefs: string[];
+}
+
+export interface ReportNarrative {
+  status: PerformanceStatus;
+  headline: string;
+  whereWeAre: AnalysisClaim;
+  findings: AnalysisClaim[];
+  actionsTaken: OperationalUpdate[];
+  nextSteps: OperationalUpdate[];
+  outlook: AnalysisClaim[];
+  nextReview: AnalysisClaim;
+  internalNeeds: AnalysisClaim[];
+}
+
 export interface ReportAnalysis {
+  narrative: ReportNarrative;
   executiveSummary: string;
   facts: AnalysisClaim[];
   interpretations: AnalysisClaim[];

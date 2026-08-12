@@ -193,9 +193,19 @@ export function fixtureConfig(objective: ReportObjective): ReportConfig {
     comparisonPeriod: { start: "2026-06-01", end: "2026-06-30" },
     tone: "executivo",
     focus: "geral",
+    audience: "client",
+    performanceStatus: "auto",
     context: ecommerce
       ? "O cliente realizou uma promoção sazonal durante a segunda quinzena."
       : "A qualidade comercial dos leads ainda precisa ser validada no CRM.",
+    actionsTaken: ecommerce
+      ? "Verba concentrada gradualmente nas campanhas com maior eficiência observada."
+      : "Distribuição revisada para reduzir diluição entre frentes de captação.",
+    nextSteps: "Acompanhar a nova composição e revisar eficiência após uma janela completa de dados.",
+    pendingInputs: ecommerce
+      ? "Confirmar margem e receita na plataforma de vendas."
+      : "Confirmar qualidade, oportunidades e vendas no CRM.",
+    nextReviewDate: "2026-08-18",
     goals: ecommerce ? { roas: 3.5, costPerPurchase: 80 } : { costPerLead: 35 },
   };
 }

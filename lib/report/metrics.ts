@@ -11,6 +11,7 @@ import type {
   ReportConfig,
   ReportObjective,
 } from "./types";
+import { assessPerformance, buildContextEvidence } from "./performance";
 
 export const metricKeys: MetricKey[] = [
   "spend",
@@ -395,7 +396,7 @@ export async function normalizeSnapshot(
     config.objective,
     metrics,
   );
-  const sourceHash = await sha256(JSON.stringify(raw));
+  const sourceHash = await sha256(JSON.stringify({ raw, config }));
   const evidence = buildEvidence(
     metrics,
     allComparisons,
@@ -405,7 +406,8 @@ export async function normalizeSnapshot(
     raw.account.currency,
   );
 
-  return {
+  const contextEvidence = buildContextEvidence(config);
+  const baseSnapshot = {
     id: crypto.randomUUID(),
     source: raw.source,
     sourceHash,
@@ -417,7 +419,12 @@ export async function normalizeSnapshot(
     comparisons: allComparisons,
     campaigns,
     evidence,
+    contextEvidence,
     quality: assessQuality(config, raw, metrics),
     sourceWarnings: raw.warnings,
+  };
+  return {
+    ...baseSnapshot,
+    performance: assessPerformance(baseSnapshot),
   };
 }

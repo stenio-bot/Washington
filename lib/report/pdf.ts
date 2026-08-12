@@ -5,6 +5,7 @@ import {
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
+import { performanceLabels } from "./performance";
 import type { NormalizedSnapshot, ReportAnalysis } from "./types";
 
 const PAGE_WIDTH = 595.28;
@@ -21,7 +22,17 @@ const colors = {
   accent: rgb(0.337, 0.459, 0.961),
   positive: rgb(0.071, 0.514, 0.373),
   warning: rgb(0.784, 0.435, 0.086),
+  critical: rgb(0.702, 0.251, 0.251),
+  recovery: rgb(0.137, 0.435, 0.533),
 };
+
+function performanceColor(snapshot: NormalizedSnapshot) {
+  if (snapshot.performance.status === "critical") return colors.critical;
+  if (snapshot.performance.status === "attention") return colors.warning;
+  if (snapshot.performance.status === "strong") return colors.positive;
+  if (snapshot.performance.status === "recovery") return colors.recovery;
+  return colors.muted;
+}
 
 function safeText(value: string) {
   return value
@@ -185,14 +196,30 @@ function addSummaryPage(
   analysis: ReportAnalysis,
 ) {
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawBase(page, fonts, snapshot, 1, snapshot.config.clientName, "Resumo executivo");
-  drawWrapped(page, fonts.medium, analysis.executiveSummary, {
+  drawBase(page, fonts, snapshot, 1, snapshot.config.clientName, "Onde estamos");
+  page.drawText(safeText(performanceLabels[snapshot.performance.status].toUpperCase()), {
     x: MARGIN,
-    y: 646,
+    y: 665,
+    size: 9,
+    font: fonts.bold,
+    color: performanceColor(snapshot),
+  });
+  drawWrapped(page, fonts.bold, analysis.narrative.headline, {
+    x: MARGIN,
+    y: 640,
     width: CONTENT_WIDTH,
-    size: 14,
-    lineHeight: 20,
+    size: 18,
+    lineHeight: 22,
+    maxLines: 2,
+  });
+  drawWrapped(page, fonts.regular, analysis.executiveSummary, {
+    x: MARGIN,
+    y: 582,
+    width: CONTENT_WIDTH,
+    size: 11,
+    lineHeight: 16,
     maxLines: 5,
+    color: colors.muted,
   });
 
   const gap = 12;
@@ -202,7 +229,7 @@ function addSummaryPage(
     const column = index % 2;
     const row = Math.floor(index / 2);
     const x = MARGIN + column * (cardWidth + gap);
-    const y = 430 - row * 116;
+    const y = 370 - row * 116;
     drawCard(page, x, y, cardWidth, 98);
     page.drawText(fitText(fonts.medium, metric.label, 9, cardWidth - 24), {
       x: x + 12,
@@ -219,22 +246,27 @@ function addSummaryPage(
       color: colors.ink,
     });
     const change = `${metric.formattedPercentChange} vs. anterior`;
+    const lowerIsBetter = ["costPerPurchase", "costPerLead", "cpc", "cpm"].includes(metric.metric);
+    const favorable =
+      metric.percentChange !== null &&
+      (lowerIsBetter ? metric.percentChange <= 0 : metric.percentChange >= 0);
     page.drawText(fitText(fonts.medium, change, 9, cardWidth - 24), {
       x: x + 12,
       y: y + 14,
       size: 9,
       font: fonts.medium,
-      color:
-        metric.percentChange !== null && metric.percentChange < 0
-          ? colors.warning
-          : colors.positive,
+      color: metric.metric === "spend" || metric.percentChange === null
+        ? colors.muted
+        : favorable
+          ? colors.positive
+          : colors.warning,
     });
   });
-  page.drawText(`Qualidade dos dados: ${snapshot.quality.score}%`, {
+  page.drawText(`Leitura: ${safeText(snapshot.performance.rationale)}`, {
     x: MARGIN,
-    y: 274,
-    size: 10,
-    font: fonts.medium,
+    y: 214,
+    size: 9,
+    font: fonts.regular,
     color: colors.muted,
   });
 }
@@ -246,33 +278,36 @@ function addDiagnosisPage(
   analysis: ReportAnalysis,
 ) {
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawBase(page, fonts, snapshot, 2, "Indicadores e diagnóstico", "O que mudou");
+  drawBase(
+    page,
+    fonts,
+    snapshot,
+    2,
+    snapshot.config.audience === "client" ? "O que identificamos" : "Indicadores e diagnóstico",
+    snapshot.config.audience === "client" ? "Leitura objetiva" : "O que mudou",
+  );
   let y = 642;
-  for (const fact of analysis.facts.slice(0, 5)) {
-    drawCard(page, MARGIN, y - 47, CONTENT_WIDTH, 62);
-    page.drawText("FATO", { x: MARGIN + 12, y: y - 10, size: 8, font: fonts.bold, color: colors.accent });
-    drawWrapped(page, fonts.medium, fact.text, {
-      x: MARGIN + 58,
-      y: y - 9,
+  const findings = snapshot.config.audience === "client"
+    ? analysis.narrative.findings
+    : [...analysis.facts.slice(0, 3), ...analysis.interpretations.slice(0, 2)];
+  for (const [index, finding] of findings.slice(0, 5).entries()) {
+    drawCard(page, MARGIN, y - 66, CONTENT_WIDTH, 81);
+    page.drawText(String(index + 1).padStart(2, "0"), {
+      x: MARGIN + 14,
+      y: y - 20,
+      size: 16,
+      font: fonts.bold,
+      color: colors.accent,
+    });
+    drawWrapped(page, fonts.medium, finding.text, {
+      x: MARGIN + 56,
+      y: y - 10,
       width: CONTENT_WIDTH - 72,
       size: 10,
       lineHeight: 14,
-      maxLines: 3,
-    });
-    y -= 73;
-  }
-  page.drawText("Leitura", { x: MARGIN, y: y - 2, size: 15, font: fonts.bold, color: colors.ink });
-  y -= 30;
-  for (const interpretation of analysis.interpretations.slice(0, 3)) {
-    y = drawWrapped(page, fonts.regular, interpretation.text, {
-      x: MARGIN,
-      y,
-      width: CONTENT_WIDTH,
-      size: 11,
-      lineHeight: 16,
       maxLines: 4,
-      color: colors.muted,
-    }) - 12;
+    });
+    y -= 94;
   }
 }
 
@@ -280,8 +315,62 @@ function addCampaignPage(
   document: PDFDocument,
   fonts: { regular: PDFFont; medium: PDFFont; bold: PDFFont },
   snapshot: NormalizedSnapshot,
+  analysis: ReportAnalysis,
 ) {
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  if (snapshot.config.audience === "client") {
+    drawBase(page, fonts, snapshot, 3, "Plano de ação", "O que foi feito e o que vem agora");
+    let y = 642;
+    const groups = [
+      { title: "O que já foi feito", items: analysis.narrative.actionsTaken },
+      { title: "Próximos passos", items: analysis.narrative.nextSteps },
+    ];
+    for (const group of groups) {
+      page.drawText(group.title, { x: MARGIN, y, size: 15, font: fonts.bold, color: colors.ink });
+      y -= 27;
+      if (group.items.length === 0) {
+        drawWrapped(page, fonts.regular, "Nenhuma ação foi confirmada pela equipe.", {
+          x: MARGIN,
+          y,
+          width: CONTENT_WIDTH,
+          size: 10,
+          lineHeight: 14,
+          maxLines: 2,
+          color: colors.muted,
+        });
+        y -= 48;
+      }
+      for (const item of group.items.slice(0, 3)) {
+        drawCard(page, MARGIN, y - 65, CONTENT_WIDTH, 78);
+        page.drawText(fitText(fonts.bold, item.title, 10, CONTENT_WIDTH - 120), {
+          x: MARGIN + 12,
+          y: y - 11,
+          size: 10,
+          font: fonts.bold,
+          color: colors.ink,
+        });
+        page.drawText(fitText(fonts.bold, item.status.replaceAll("_", " ").toUpperCase(), 7, 85), {
+          x: PAGE_WIDTH - MARGIN - 95,
+          y: y - 11,
+          size: 7,
+          font: fonts.bold,
+          color: item.status === "aplicado" ? colors.positive : colors.accent,
+        });
+        drawWrapped(page, fonts.regular, item.detail, {
+          x: MARGIN + 12,
+          y: y - 31,
+          width: CONTENT_WIDTH - 24,
+          size: 9,
+          lineHeight: 13,
+          maxLines: 3,
+          color: colors.muted,
+        });
+        y -= 90;
+      }
+      y -= 13;
+    }
+    return;
+  }
   drawBase(page, fonts, snapshot, 3, "Campanhas e exceções", "Onde o resultado aconteceu");
   let y = 641;
   const metricKey = snapshot.config.objective === "ecommerce" ? "roas" : "costPerLead";
@@ -339,14 +428,49 @@ function addActionsPage(
   analysis: ReportAnalysis,
 ) {
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawBase(page, fonts, snapshot, 4, "Ações prioritárias", "O que avaliar primeiro");
+  drawBase(
+    page,
+    fonts,
+    snapshot,
+    4,
+    snapshot.config.audience === "client" ? "O que esperar" : "Hipóteses e ações prioritárias",
+    snapshot.config.audience === "client" ? "Perspectiva sem promessa" : "O que avaliar primeiro",
+  );
   let y = 635;
+  if (snapshot.config.audience === "client") {
+    for (const [index, item] of analysis.narrative.outlook.slice(0, 3).entries()) {
+      page.drawText(String(index + 1).padStart(2, "0"), {
+        x: MARGIN,
+        y,
+        size: 15,
+        font: fonts.bold,
+        color: performanceColor(snapshot),
+      });
+      y = drawWrapped(page, fonts.medium, item.text, {
+        x: MARGIN + 36,
+        y: y + 1,
+        width: CONTENT_WIDTH - 36,
+        size: 10,
+        lineHeight: 14,
+        maxLines: 4,
+      }) - 15;
+    }
+    page.drawLine({
+      start: { x: MARGIN, y: y },
+      end: { x: PAGE_WIDTH - MARGIN, y },
+      thickness: 0.8,
+      color: colors.line,
+    });
+    y -= 28;
+    page.drawText("Decisões de mídia paga", { x: MARGIN, y, size: 15, font: fonts.bold, color: colors.ink });
+    y -= 26;
+  }
   analysis.recommendations.slice(0, 3).forEach((recommendation, index) => {
-    drawCard(page, MARGIN, y - 147, CONTENT_WIDTH, 164);
+    drawCard(page, MARGIN, y - 126, CONTENT_WIDTH, 140);
     page.drawText(String(index + 1).padStart(2, "0"), {
       x: MARGIN + 14,
-      y: y - 20,
-      size: 22,
+      y: y - 18,
+      size: 18,
       font: fonts.bold,
       color: colors.accent,
     });
@@ -356,7 +480,7 @@ function addActionsPage(
       width: CONTENT_WIDTH - 70,
       size: 12,
       lineHeight: 16,
-      maxLines: 3,
+      maxLines: 2,
     });
     innerY = drawWrapped(page, fonts.regular, `Por quê: ${recommendation.rationale}`, {
       x: MARGIN + 56,
@@ -385,7 +509,7 @@ function addActionsPage(
       maxLines: 2,
       color: colors.muted,
     });
-    y -= 180;
+    y -= 151;
   });
 }
 
@@ -396,7 +520,48 @@ function addMethodPage(
   analysis: ReportAnalysis,
 ) {
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawBase(page, fonts, snapshot, 5, "Metodologia e limitações", "Até onde confiar");
+  drawBase(
+    page,
+    fonts,
+    snapshot,
+    5,
+    snapshot.config.audience === "client" ? "Próxima leitura" : "Pendências e método",
+    snapshot.config.audience === "client" ? "Próximo marco de decisão" : "O que falta validar",
+  );
+  let y = 643;
+  drawCard(page, MARGIN, y - 83, CONTENT_WIDTH, 98);
+  page.drawText("QUANDO E POR QUÊ", {
+    x: MARGIN + 14,
+    y: y - 13,
+    size: 8,
+    font: fonts.bold,
+    color: colors.accent,
+  });
+  drawWrapped(page, fonts.medium, analysis.narrative.nextReview.text, {
+    x: MARGIN + 14,
+    y: y - 35,
+    width: CONTENT_WIDTH - 28,
+    size: 11,
+    lineHeight: 15,
+    maxLines: 4,
+  });
+  y -= 123;
+  if (snapshot.config.audience === "internal") {
+    page.drawText("O que ainda precisamos", { x: MARGIN, y, size: 15, font: fonts.bold, color: colors.ink });
+    y -= 28;
+    for (const item of analysis.narrative.internalNeeds.slice(0, 4)) {
+      y = drawWrapped(page, fonts.regular, `- ${item.text}`, {
+        x: MARGIN,
+        y,
+        width: CONTENT_WIDTH,
+        size: 10,
+        lineHeight: 14,
+        maxLines: 3,
+        color: colors.muted,
+      }) - 8;
+    }
+    y -= 7;
+  }
   const methodology = [
     `Fonte: ${snapshot.source}`,
     `Período: ${snapshot.config.period.start} a ${snapshot.config.period.end}`,
@@ -405,7 +570,8 @@ function addMethodPage(
     `Qualidade dos dados: ${snapshot.quality.score}% | ${snapshot.quality.status}`,
     `Snapshot: ${snapshot.sourceHash.slice(0, 16)}`,
   ];
-  let y = 643;
+  page.drawText("Base da leitura", { x: MARGIN, y, size: 15, font: fonts.bold, color: colors.ink });
+  y -= 28;
   for (const item of methodology) {
     page.drawText(fitText(fonts.medium, `- ${item}`, 10, CONTENT_WIDTH), {
       x: MARGIN,
@@ -414,11 +580,11 @@ function addMethodPage(
       font: fonts.medium,
       color: colors.ink,
     });
-    y -= 23;
+    y -= 20;
   }
-  page.drawText("Limitações declaradas", { x: MARGIN, y: y - 7, size: 15, font: fonts.bold, color: colors.ink });
-  y -= 38;
-  for (const limitation of analysis.limitations.slice(0, 7)) {
+  page.drawText("Limitações declaradas", { x: MARGIN, y: y - 4, size: 13, font: fonts.bold, color: colors.ink });
+  y -= 30;
+  for (const limitation of analysis.limitations.slice(0, 4)) {
     y = drawWrapped(page, fonts.regular, `- ${limitation}`, {
       x: MARGIN,
       y,
@@ -457,7 +623,7 @@ export async function createReportPdfBytes(
 
   addSummaryPage(document, fonts, snapshot, analysis);
   addDiagnosisPage(document, fonts, snapshot, analysis);
-  addCampaignPage(document, fonts, snapshot);
+  addCampaignPage(document, fonts, snapshot, analysis);
   addActionsPage(document, fonts, snapshot, analysis);
   addMethodPage(document, fonts, snapshot, analysis);
   return document.save({ useObjectStreams: false });

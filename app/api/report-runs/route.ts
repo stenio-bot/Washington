@@ -8,6 +8,8 @@ import { createMetaProvider } from "../../../lib/meta/factory";
 import { normalizeSnapshot } from "../../../lib/report/metrics";
 import type {
   DateRange,
+  PerformanceStatusSelection,
+  ReportAudience,
   ReportConfig,
   ReportFocus,
   ReportObjective,
@@ -53,9 +55,19 @@ function parseConfig(payload: Record<string, unknown>): ReportConfig {
   const objective = payload.objective;
   const tone = payload.tone;
   const focus = payload.focus;
+  const audience = payload.audience;
+  const performanceStatus = payload.performanceStatus;
   if (!(["ecommerce", "leads"] as unknown[]).includes(objective)) throw new Error("Objetivo inválido.");
   if (!(["executivo", "consultivo", "direto"] as unknown[]).includes(tone)) throw new Error("Tom inválido.");
   if (!(["geral", "eficiencia", "escala", "criativos"] as unknown[]).includes(focus)) throw new Error("Foco inválido.");
+  if (!(["client", "internal"] as unknown[]).includes(audience)) throw new Error("Destinatário inválido.");
+  if (!(["auto", "critical", "attention", "recovery", "stable", "strong"] as unknown[]).includes(performanceStatus)) {
+    throw new Error("Leitura do resultado inválida.");
+  }
+  const nextReviewDate = optionalString(payload.nextReviewDate, 10);
+  if (nextReviewDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextReviewDate)) {
+    throw new Error("Data da próxima leitura inválida.");
+  }
   return {
     workspaceId: "washington_internal",
     clientId: stringField(payload.clientId, "Cliente"),
@@ -69,7 +81,13 @@ function parseConfig(payload: Record<string, unknown>): ReportConfig {
       : null,
     tone: tone as ReportTone,
     focus: focus as ReportFocus,
+    audience: audience as ReportAudience,
+    performanceStatus: performanceStatus as PerformanceStatusSelection,
     context: optionalString(payload.context),
+    actionsTaken: optionalString(payload.actionsTaken),
+    nextSteps: optionalString(payload.nextSteps),
+    pendingInputs: optionalString(payload.pendingInputs),
+    nextReviewDate,
     goals:
       payload.goals && typeof payload.goals === "object"
         ? (payload.goals as ReportConfig["goals"])
