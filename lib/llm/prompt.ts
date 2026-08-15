@@ -1,7 +1,7 @@
 import { performanceToneGuides } from "../report/performance";
 import type { NormalizedSnapshot } from "../report/types";
 
-export const PROMPT_VERSION = "washington-analysis-v2";
+export const PROMPT_VERSION = "washington-analysis-v3";
 
 export const SYSTEM_PROMPT = `Você é o analista executivo do Projeto Washington.
 
@@ -15,6 +15,9 @@ Regras factuais obrigatórias:
 - Não diga que uma ação foi aplicada ou está em andamento sem a evidência context.actions_taken.
 - Não invente prazo, responsável, orçamento, margem, status de plataforma ou ação executada.
 - Não prometa recuperação, retorno, vendas ou prazo de estabilização.
+- Público e formato vêm de uma taxonomia estrita aplicada à nomenclatura. Isso não comprova o targeting real, a peça visual, a causa do resultado nem a intenção da campanha.
+- Só mencione público frio, morno, quente, remarketing ou formato quando o recorte estiver marcado como eligibleForNarrative e a afirmação citar evidenceRefs de breakdown.
+- "Não classificado" é ausência de padrão, não um tipo de público ou criativo. Nunca preencha esse campo por inferência.
 - Produza no máximo três recomendações simples, primárias, reversíveis e testáveis de mídia paga.
 - A classificação narrativa deve ser exatamente igual a performance.status.
 - executiveSummary deve repetir exatamente narrative.whereWeAre.text para manter a edição sincronizada.
@@ -41,10 +44,31 @@ export function buildLlmInput(snapshot: NormalizedSnapshot) {
       shareOfSpend: campaign.shareOfSpend,
     }));
 
+  const selectedBreakdowns = (["audience", "format"] as const).flatMap((dimension) => {
+    const coverage = snapshot.creativeAnalysis.coverage[dimension];
+    if (!coverage.eligibleForNarrative) return [];
+    const rows = dimension === "audience"
+      ? snapshot.creativeAnalysis.audience
+      : snapshot.creativeAnalysis.format;
+    return rows
+      .filter((item) => item.key !== "unclassified" && (item.current.spend ?? 0) > 0)
+      .slice(0, 5)
+      .map((item) => ({
+        dimension,
+        key: item.key,
+        label: item.label,
+        shareOfSpend: item.shareOfSpend,
+        evidencePrefix: `breakdown.${dimension}.${item.key}`,
+      }));
+  });
+
   const evidence = Object.values(snapshot.evidence)
     .filter((item) => {
       if (item.scope === "account") return item.current !== null;
-      return selectedCampaigns.some((campaign) => campaign.id === item.entityId) && item.current !== null;
+      if (item.scope === "campaign") {
+        return selectedCampaigns.some((campaign) => campaign.id === item.entityId) && item.current !== null;
+      }
+      return selectedBreakdowns.some((breakdown) => item.ref.startsWith(breakdown.evidencePrefix)) && item.current !== null;
     })
     .map((item) => ({
       ref: item.ref,
@@ -74,8 +98,17 @@ export function buildLlmInput(snapshot: NormalizedSnapshot) {
     goals: snapshot.config.goals,
     dataQuality: snapshot.quality,
     sourceWarnings: snapshot.sourceWarnings,
-    operatorEvidence: Object.values(snapshot.contextEvidence),
+    operatorEvidence: Object.values(snapshot.contextEvidence).filter((item) => item.source === "operator"),
+    systemEvidence: Object.values(snapshot.contextEvidence).filter((item) => item.source === "system"),
     campaigns: selectedCampaigns,
+    creativeAnalysis: {
+      mode: snapshot.creativeAnalysis.mode,
+      rulesVersion: snapshot.creativeAnalysis.rulesVersion,
+      convention: snapshot.creativeAnalysis.convention,
+      caveat: "Classificação derivada somente dos nomes. Não representa o targeting real nem leitura visual da peça.",
+      coverage: snapshot.creativeAnalysis.coverage,
+      eligibleBreakdowns: selectedBreakdowns,
+    },
     evidence,
     outputRules: {
       maximumFindings: 3,

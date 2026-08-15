@@ -11,6 +11,18 @@ export type PerformanceStatus =
   | "strong"
   | "inconclusive";
 export type PerformanceStatusSelection = "auto" | Exclude<PerformanceStatus, "inconclusive">;
+export type TaxonomyMode = "strict" | "disabled";
+export type TaxonomyDimension = "audience" | "format";
+export type AudienceCategory = "cold" | "warm" | "hot" | "remarketing" | "unclassified";
+export type CreativeFormat =
+  | "video"
+  | "static"
+  | "carousel"
+  | "reels"
+  | "stories"
+  | "catalog"
+  | "collection"
+  | "unclassified";
 
 export interface DateRange {
   start: string;
@@ -54,6 +66,7 @@ export interface ReportConfig {
   focus: ReportFocus;
   audience: ReportAudience;
   performanceStatus: PerformanceStatusSelection;
+  taxonomyMode: TaxonomyMode;
   context: string;
   actionsTaken: string;
   nextSteps: string;
@@ -139,7 +152,7 @@ export interface EvidenceMetric {
   ref: string;
   label: string;
   metric: MetricKey;
-  scope: "account" | "campaign";
+  scope: "account" | "campaign" | "breakdown";
   entityId: string;
   entityName: string;
   current: number | null;
@@ -154,7 +167,45 @@ export interface ContextEvidence {
   ref: string;
   label: string;
   text: string;
-  source: "operator";
+  source: "operator" | "system";
+}
+
+export interface TaxonomyClassification {
+  value: AudienceCategory | CreativeFormat;
+  label: string;
+  status: "explicit" | "ambiguous" | "unclassified";
+  source: "adset_name" | "campaign_name" | "ad_name" | "creative_name" | null;
+  matchedTokens: string[];
+}
+
+export interface TaxonomyBreakdownSummary {
+  dimension: TaxonomyDimension;
+  key: AudienceCategory | CreativeFormat;
+  label: string;
+  current: MetricValues;
+  previous: MetricValues;
+  comparisons: Record<MetricKey, MetricComparison>;
+  shareOfSpend: number | null;
+  adCount: number;
+}
+
+export interface TaxonomyCoverage {
+  eligibleAds: number;
+  classifiedAds: number;
+  totalSpend: number | null;
+  classifiedSpend: number | null;
+  rateByAds: number | null;
+  rateBySpend: number | null;
+  eligibleForNarrative: boolean;
+}
+
+export interface CreativeAnalysis {
+  mode: TaxonomyMode;
+  rulesVersion: string;
+  convention: string;
+  audience: TaxonomyBreakdownSummary[];
+  format: TaxonomyBreakdownSummary[];
+  coverage: Record<TaxonomyDimension, TaxonomyCoverage>;
 }
 
 export interface PerformanceAssessment {
@@ -176,6 +227,7 @@ export interface NormalizedSnapshot {
   previousMetrics: MetricValues;
   comparisons: Record<MetricKey, MetricComparison>;
   campaigns: CampaignMetricSummary[];
+  creativeAnalysis: CreativeAnalysis;
   evidence: Record<string, EvidenceMetric>;
   contextEvidence: Record<string, ContextEvidence>;
   performance: PerformanceAssessment;

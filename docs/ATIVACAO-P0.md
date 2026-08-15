@@ -62,6 +62,8 @@ Validar:
 - compras e receita atribuída para e-commerce;
 - leads para geração de leads;
 - campanhas presentes e nomes;
+- conjuntos, anúncios e nomes usados pela taxonomia;
+- cobertura de classificação por público e formato;
 - moeda, fuso e atribuição.
 
 Não aprovar o piloto quando houver:

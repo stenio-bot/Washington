@@ -14,6 +14,7 @@ import type {
   ReportFocus,
   ReportObjective,
   ReportTone,
+  TaxonomyMode,
 } from "../../../lib/report/types";
 import {
   createReportRun,
@@ -57,12 +58,16 @@ function parseConfig(payload: Record<string, unknown>): ReportConfig {
   const focus = payload.focus;
   const audience = payload.audience;
   const performanceStatus = payload.performanceStatus;
+  const taxonomyMode = payload.taxonomyMode;
   if (!(["ecommerce", "leads"] as unknown[]).includes(objective)) throw new Error("Objetivo inválido.");
   if (!(["executivo", "consultivo", "direto"] as unknown[]).includes(tone)) throw new Error("Tom inválido.");
   if (!(["geral", "eficiencia", "escala", "criativos"] as unknown[]).includes(focus)) throw new Error("Foco inválido.");
   if (!(["client", "internal"] as unknown[]).includes(audience)) throw new Error("Destinatário inválido.");
   if (!(["auto", "critical", "attention", "recovery", "stable", "strong"] as unknown[]).includes(performanceStatus)) {
     throw new Error("Leitura do resultado inválida.");
+  }
+  if (!(["strict", "disabled"] as unknown[]).includes(taxonomyMode)) {
+    throw new Error("Leitura de nomenclatura inválida.");
   }
   const nextReviewDate = optionalString(payload.nextReviewDate, 10);
   if (nextReviewDate && !/^\d{4}-\d{2}-\d{2}$/.test(nextReviewDate)) {
@@ -83,6 +88,7 @@ function parseConfig(payload: Record<string, unknown>): ReportConfig {
     focus: focus as ReportFocus,
     audience: audience as ReportAudience,
     performanceStatus: performanceStatus as PerformanceStatusSelection,
+    taxonomyMode: taxonomyMode as TaxonomyMode,
     context: optionalString(payload.context),
     actionsTaken: optionalString(payload.actionsTaken),
     nextSteps: optionalString(payload.nextSteps),

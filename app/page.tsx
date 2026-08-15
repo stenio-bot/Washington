@@ -14,6 +14,8 @@ import type {
   ReportFocus,
   ReportObjective,
   ReportTone,
+  TaxonomyDimension,
+  TaxonomyMode,
 } from "../lib/report/types";
 
 type PreviewTab = "overview" | "diagnosis" | "plan" | "outlook" | "followup";
@@ -89,6 +91,11 @@ function reportFilename(clientName: string) {
   return `projeto-washington-${safe || "relatorio"}.pdf`;
 }
 
+function coverageLabel(value: number | null) {
+  if (value === null) return "Sem dados";
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(value * 100)}% classificado`;
+}
+
 export default function Home() {
   const [objective, setObjective] = useState<ReportObjective>("ecommerce");
   const [audience, setAudience] = useState<ReportAudience>("client");
@@ -104,6 +111,7 @@ export default function Home() {
   const [compare, setCompare] = useState(true);
   const [tone, setTone] = useState<ReportTone>("executivo");
   const [focus, setFocus] = useState<ReportFocus>("geral");
+  const [taxonomyMode, setTaxonomyMode] = useState<TaxonomyMode>("strict");
   const [context, setContext] = useState(
     "O cliente realizou uma promoção sazonal durante a segunda quinzena.",
   );
@@ -204,6 +212,7 @@ export default function Home() {
           objective,
           audience,
           performanceStatus,
+          taxonomyMode,
           period: { start: periodStart, end: periodEnd },
           comparisonPeriod: compare ? previousEquivalent(periodStart, periodEnd) : null,
           tone,
@@ -287,6 +296,54 @@ export default function Home() {
     );
   }
 
+  function taxonomyBlock(dimension: TaxonomyDimension) {
+    if (!report) return null;
+    const analysis = report.snapshot.creativeAnalysis;
+    const coverage = analysis.coverage[dimension];
+    const title = dimension === "audience" ? "Por tipo de público" : "Por formato de anúncio";
+    const resultMetric = report.snapshot.config.objective === "ecommerce" ? "purchases" : "leads";
+    const efficiencyMetric = report.snapshot.config.objective === "ecommerce" ? "roas" : "costPerLead";
+    const sourceRows = dimension === "audience" ? analysis.audience : analysis.format;
+    const rows = sourceRows
+      .filter((item) => reportAudience === "internal" || item.key !== "unclassified")
+      .slice(0, 5);
+
+    return (
+      <div className="taxonomy-block">
+        <div className="taxonomy-block-heading">
+          <h4>{title}</h4>
+          <span className={coverage.eligibleForNarrative ? "coverage-ready" : "coverage-low"}>
+            {coverageLabel(coverage.rateBySpend)}
+          </span>
+        </div>
+        {reportAudience === "client" && !coverage.eligibleForNarrative ? (
+          <p className="taxonomy-empty">
+            A nomenclatura ainda não cobre investimento suficiente para uma conclusão segura.
+          </p>
+        ) : rows.length === 0 ? (
+          <p className="taxonomy-empty">Nenhum anúncio classificado neste recorte.</p>
+        ) : (
+          <div className="taxonomy-table">
+            <div className="taxonomy-row taxonomy-head">
+              <span>Grupo</span><span>Investimento</span><span>Resultados</span><span>Eficiência</span>
+            </div>
+            {rows.map((item) => {
+              const prefix = `breakdown.${dimension}.${item.key}`;
+              return (
+                <div className="taxonomy-row" key={`${dimension}-${item.key}`}>
+                  <span><strong>{item.label}</strong><small>{item.adCount} anúncio(s)</small></span>
+                  <span>{report.snapshot.evidence[`${prefix}.spend`].formattedCurrent}</span>
+                  <span>{report.snapshot.evidence[`${prefix}.${resultMetric}`].formattedCurrent}</span>
+                  <span>{report.snapshot.evidence[`${prefix}.${efficiencyMetric}`].formattedCurrent}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Navegação principal">
@@ -337,6 +394,9 @@ export default function Home() {
             </div>
             <label>Foco da análise<select value={focus} onChange={(event) => setFocus(event.target.value as ReportFocus)}><option value="geral">Visão geral</option><option value="eficiencia">Eficiência</option><option value="escala">Escala</option><option value="criativos">Criativos</option></select></label>
 
+            <label>Leitura da nomenclatura<select value={taxonomyMode} onChange={(event) => setTaxonomyMode(event.target.value as TaxonomyMode)}><option value="strict">Estrita — sem inferência</option><option value="disabled">Desativada</option></select></label>
+            <div className="naming-guide"><strong>Padrão Washington v1</strong><span>[PÚBLICO] [FORMATO] Nome livre</span><small>Ex.: [FRIO] [VIDEO] Prova social 01. O que não corresponder fica como “não classificado”.</small></div>
+
             <div className="form-divider"><span>Brief operacional</span><small>A LLM não inventa o que não estiver aqui.</small></div>
             <label>Contexto do período <span className="optional">opcional</span><textarea rows={2} value={context} onChange={(event) => setContext(event.target.value)} placeholder="Ex.: promoção, mudança de oferta, falha de página ou contexto do CRM." /></label>
             <label>Ações já realizadas <span className="optional">opcional</span><textarea rows={2} value={actionsTaken} onChange={(event) => setActionsTaken(event.target.value)} placeholder="Ex.: Campanha X — orçamento ampliado em 11/08." /></label>
@@ -366,7 +426,20 @@ export default function Home() {
                   <p className="status-rationale">{report.snapshot.performance.rationale}</p>
                 </>}
 
-                {tab === "diagnosis" && <div className="report-section"><p className="section-kicker">O QUE IDENTIFICAMOS</p><h3>{reportAudience === "client" ? "Os pontos que explicam a leitura" : "Sinais, leitura e hipóteses"}</h3><div className="claim-list">{draft.narrative.findings.map((finding, index) => <div key={`${finding.text}-${index}`}><span>Ponto {index + 1}</span><p>{finding.text}</p></div>)}{reportAudience === "internal" && draft.interpretations.map((item) => <div key={item.text}><span>Interpretação</span><p>{item.text}</p></div>)}</div>{reportAudience === "internal" && <div className="hypothesis-box"><strong>Hipóteses a validar</strong>{draft.hypotheses.map((item) => <p key={item.text}>{item.text}<small>Como validar: {item.validation}</small></p>)}</div>}</div>}
+                {tab === "diagnosis" && <div className="report-section">
+                  <p className="section-kicker">O QUE IDENTIFICAMOS</p>
+                  <h3>{reportAudience === "client" ? "Os pontos que explicam a leitura" : "Sinais, recortes e hipóteses"}</h3>
+                  <div className="claim-list">
+                    {draft.narrative.findings.map((finding, index) => <div key={`${finding.text}-${index}`}><span>Ponto {index + 1}</span><p>{finding.text}</p></div>)}
+                    {reportAudience === "internal" && draft.interpretations.map((item) => <div key={item.text}><span>Interpretação</span><p>{item.text}</p></div>)}
+                  </div>
+                  {report.snapshot.creativeAnalysis.mode === "strict" && <div className="taxonomy-analysis">
+                    <div className="taxonomy-intro"><div><strong>Leitura por nomenclatura</strong><span>Recortes determinísticos; não representam o targeting real do Meta.</span></div><span>{report.snapshot.creativeAnalysis.rulesVersion}</span></div>
+                    {taxonomyBlock("audience")}
+                    {taxonomyBlock("format")}
+                  </div>}
+                  {reportAudience === "internal" && <div className="hypothesis-box"><strong>Hipóteses a validar</strong>{draft.hypotheses.map((item) => <p key={item.text}>{item.text}<small>Como validar: {item.validation}</small></p>)}</div>}
+                </div>}
 
                 {tab === "plan" && <div className="report-section"><p className="section-kicker">PLANO DE AÇÃO</p><h3>O que foi feito e o que vem agora</h3><div className="plan-columns"><div><h4>O que já foi feito</h4>{draft.narrative.actionsTaken.length === 0 ? <p className="empty-section">Nenhuma ação foi confirmada pela equipe.</p> : draft.narrative.actionsTaken.map((item) => <div className="operational-card" key={`${item.title}-${item.status}`}><div><strong>{item.title}</strong><p>{item.detail}</p></div><span className={`operation-status ${item.status}`}>{item.status.replaceAll("_", " ")}</span></div>)}</div><div><h4>Próximos passos</h4>{draft.narrative.nextSteps.map((item) => <div className="operational-card" key={`${item.title}-${item.status}`}><div><strong>{item.title}</strong><p>{item.detail}</p></div><span className={`operation-status ${item.status}`}>{item.status.replaceAll("_", " ")}</span></div>)}</div></div></div>}
 

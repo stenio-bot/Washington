@@ -161,6 +161,27 @@ export function validateAnalysis(
     for (const ref of claim.evidenceRefs) {
       if (!evidenceExists(snapshot, ref)) errors.push(`Referência de evidência inexistente: ${ref}`);
       else checkedEvidenceRefs.add(ref);
+      if (ref.startsWith("breakdown.audience.") && !snapshot.creativeAnalysis.coverage.audience.eligibleForNarrative) {
+        errors.push("A análise usou recorte de público com cobertura insuficiente da nomenclatura.");
+      }
+      if (ref.startsWith("breakdown.format.") && !snapshot.creativeAnalysis.coverage.format.eligibleForNarrative) {
+        errors.push("A análise usou recorte de formato com cobertura insuficiente da nomenclatura.");
+      }
+      if (ref.includes(".unclassified.")) {
+        errors.push("A análise tratou anúncios não classificados como um segmento interpretável.");
+      }
+    }
+    const taxonomyTerm = /\b(público frio|público morno|público quente|remarketing|retargeting|vídeo|carrossel|estático|reels|stories|catálogo|coleção)\b/i;
+    const mentionsCitedEntityName = claim.evidenceRefs.some((ref) => {
+      const entity = snapshot.evidence[ref]?.entityName;
+      return entity ? claim.text.toLocaleLowerCase("pt-BR").includes(entity.toLocaleLowerCase("pt-BR")) : false;
+    });
+    if (
+      taxonomyTerm.test(claim.text) &&
+      !claim.evidenceRefs.some((ref) => ref.startsWith("breakdown.")) &&
+      !mentionsCitedEntityName
+    ) {
+      errors.push(`Recorte de público ou formato sem evidência de nomenclatura: ${claim.text}`);
     }
   }
 
@@ -195,6 +216,16 @@ export function validateAnalysis(
   ].join(" ");
   if (promisePattern.test(externalNarrative)) {
     errors.push("A narrativa contém promessa de resultado ou recuperação.");
+  }
+
+  const causalPattern = /\b(causou|provocou|foi responsável por|explica a queda|gerou a queda)\b/i;
+  const unsupportedCausalClaims = [
+    ...analysis.narrative.findings,
+    ...analysis.facts,
+    ...analysis.interpretations,
+  ].filter((claim) => causalPattern.test(claim.text));
+  if (unsupportedCausalClaims.length > 0) {
+    errors.push("A análise apresentou causalidade como fato sem um experimento ou fonte causal.");
   }
 
   if (snapshot.quality.status !== "ready" && analysis.confidence === "alta") {

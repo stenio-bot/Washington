@@ -309,6 +309,116 @@ function addDiagnosisPage(
     });
     y -= 94;
   }
+  if (snapshot.config.audience === "client") {
+    const taxonomyCards = (["audience", "format"] as const).flatMap((dimension) => {
+      if (!snapshot.creativeAnalysis.coverage[dimension].eligibleForNarrative) return [];
+      const rows = dimension === "audience"
+        ? snapshot.creativeAnalysis.audience
+        : snapshot.creativeAnalysis.format;
+      const top = rows.find((item) => item.key !== "unclassified" && (item.current.spend ?? 0) > 0);
+      return top ? [{ dimension, item: top }] : [];
+    });
+    if (taxonomyCards.length > 0 && y > 190) {
+      page.drawText("Recortes pela nomenclatura", {
+        x: MARGIN,
+        y: y - 2,
+        size: 13,
+        font: fonts.bold,
+        color: colors.ink,
+      });
+      y -= 28;
+      const gap = 12;
+      const width = (CONTENT_WIDTH - gap) / 2;
+      taxonomyCards.slice(0, 2).forEach(({ dimension, item }, index) => {
+        const x = MARGIN + index * (width + gap);
+        const prefix = `breakdown.${dimension}.${item.key}`;
+        const efficiencyMetric = snapshot.config.objective === "ecommerce" ? "roas" : "costPerLead";
+        const spend = snapshot.evidence[`${prefix}.spend`];
+        const efficiency = snapshot.evidence[`${prefix}.${efficiencyMetric}`];
+        drawCard(page, x, y - 75, width, 86);
+        page.drawText(fitText(fonts.bold, item.label, 10, width - 24), {
+          x: x + 12,
+          y: y - 10,
+          size: 10,
+          font: fonts.bold,
+          color: colors.ink,
+        });
+        page.drawText(fitText(fonts.regular, `Investimento: ${spend.formattedCurrent}`, 9, width - 24), {
+          x: x + 12,
+          y: y - 34,
+          size: 9,
+          font: fonts.regular,
+          color: colors.muted,
+        });
+        page.drawText(fitText(fonts.regular, `${efficiency.label}: ${efficiency.formattedCurrent}`, 9, width - 24), {
+          x: x + 12,
+          y: y - 54,
+          size: 9,
+          font: fonts.regular,
+          color: colors.muted,
+        });
+      });
+      drawWrapped(page, fonts.regular, "Classificação baseada nos nomes; não comprova targeting ou causalidade.", {
+        x: MARGIN,
+        y: y - 94,
+        width: CONTENT_WIDTH,
+        size: 8,
+        lineHeight: 11,
+        maxLines: 2,
+        color: colors.muted,
+      });
+    }
+  }
+}
+
+function drawTaxonomySection(
+  page: PDFPage,
+  fonts: { regular: PDFFont; medium: PDFFont; bold: PDFFont },
+  snapshot: NormalizedSnapshot,
+  dimension: "audience" | "format",
+  y: number,
+) {
+  const coverage = snapshot.creativeAnalysis.coverage[dimension];
+  const rows = (dimension === "audience"
+    ? snapshot.creativeAnalysis.audience
+    : snapshot.creativeAnalysis.format).slice(0, 4);
+  const title = dimension === "audience" ? "Por tipo de público" : "Por formato de anúncio";
+  const coverageText = coverage.rateBySpend === null
+    ? "Sem cobertura"
+    : `${Math.round(coverage.rateBySpend * 100)}% classificado`;
+  page.drawText(title, { x: MARGIN, y, size: 14, font: fonts.bold, color: colors.ink });
+  page.drawText(coverageText, {
+    x: PAGE_WIDTH - MARGIN - fonts.medium.widthOfTextAtSize(coverageText, 8),
+    y: y + 2,
+    size: 8,
+    font: fonts.medium,
+    color: coverage.eligibleForNarrative ? colors.positive : colors.warning,
+  });
+  y -= 23;
+  const headers = ["Grupo", "Investimento", "Resultados", "Eficiência"];
+  const columns = [MARGIN + 10, MARGIN + 210, MARGIN + 330, MARGIN + 420];
+  page.drawRectangle({ x: MARGIN, y: y - 22, width: CONTENT_WIDTH, height: 27, color: rgb(0.93, 0.945, 0.97) });
+  headers.forEach((header, index) => page.drawText(header.toUpperCase(), {
+    x: columns[index], y: y - 12, size: 7, font: fonts.bold, color: colors.muted,
+  }));
+  y -= 27;
+  const resultMetric = snapshot.config.objective === "ecommerce" ? "purchases" : "leads";
+  const efficiencyMetric = snapshot.config.objective === "ecommerce" ? "roas" : "costPerLead";
+  for (const item of rows) {
+    const prefix = `breakdown.${dimension}.${item.key}`;
+    drawCard(page, MARGIN, y - 37, CONTENT_WIDTH, 42);
+    const values = [
+      item.label,
+      snapshot.evidence[`${prefix}.spend`].formattedCurrent,
+      snapshot.evidence[`${prefix}.${resultMetric}`].formattedCurrent,
+      snapshot.evidence[`${prefix}.${efficiencyMetric}`].formattedCurrent,
+    ];
+    values.forEach((value, index) => page.drawText(fitText(index === 0 ? fonts.bold : fonts.regular, value, 8, index === 0 ? 180 : 90), {
+      x: columns[index], y: y - 21, size: 8, font: index === 0 ? fonts.bold : fonts.regular, color: colors.ink,
+    }));
+    y -= 46;
+  }
+  return y;
 }
 
 function addCampaignPage(
@@ -369,6 +479,26 @@ function addCampaignPage(
       }
       y -= 13;
     }
+    return;
+  }
+  if (
+    snapshot.creativeAnalysis.mode === "strict" &&
+    (snapshot.creativeAnalysis.coverage.audience.eligibleAds > 0 ||
+      snapshot.creativeAnalysis.coverage.format.eligibleAds > 0)
+  ) {
+    drawBase(page, fonts, snapshot, 3, "Públicos e criativos", "Leitura pela nomenclatura");
+    let taxonomyY = drawTaxonomySection(page, fonts, snapshot, "audience", 642);
+    taxonomyY -= 18;
+    drawTaxonomySection(page, fonts, snapshot, "format", taxonomyY);
+    drawWrapped(page, fonts.regular, "A classificação deriva somente dos nomes de campanha, conjunto e anúncio. Ela não substitui o targeting configurado no Meta.", {
+      x: MARGIN,
+      y: 74,
+      width: CONTENT_WIDTH,
+      size: 8,
+      lineHeight: 11,
+      maxLines: 2,
+      color: colors.muted,
+    });
     return;
   }
   drawBase(page, fonts, snapshot, 3, "Campanhas e exceções", "Onde o resultado aconteceu");

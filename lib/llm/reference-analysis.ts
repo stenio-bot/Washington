@@ -104,6 +104,24 @@ export function buildReferenceAnalysis(snapshot: NormalizedSnapshot): ReportAnal
     });
   }
 
+  const taxonomyHighlights: ReportAnalysis["campaignHighlights"] = [];
+  for (const dimension of ["audience", "format"] as const) {
+    if (!snapshot.creativeAnalysis.coverage[dimension].eligibleForNarrative) continue;
+    const breakdowns = dimension === "audience"
+      ? snapshot.creativeAnalysis.audience
+      : snapshot.creativeAnalysis.format;
+    const top = breakdowns.find((item) => item.key !== "unclassified" && (item.current.spend ?? 0) > 0);
+    if (!top) continue;
+    const prefix = `breakdown.${dimension}.${top.key}`;
+    const spendItem = evidence(snapshot, `${prefix}.spend`);
+    const efficiencyItem = evidence(snapshot, `${prefix}.${primaryCampaignMetric}`);
+    taxonomyHighlights.push({
+      text: `Pela nomenclatura, ${top.label} concentrou ${spendItem.formattedCurrent} e registrou ${efficiencyItem.label.toLowerCase()} de ${efficiencyItem.formattedCurrent}. O recorte descreve os nomes dos anúncios e não comprova causalidade.`,
+      evidenceRefs: [`${prefix}.spend`, `${prefix}.${primaryCampaignMetric}`],
+    });
+  }
+  campaignHighlights.push(...taxonomyHighlights);
+
   const recommendations: ReportAnalysis["recommendations"] = [];
   if (highlights[0]) {
     recommendations.push({
@@ -223,7 +241,9 @@ export function buildReferenceAnalysis(snapshot: NormalizedSnapshot): ReportAnal
         text: whereWeAre,
         evidenceRefs: [primaryResultRef, efficiencyRef],
       },
-      findings: facts.slice(0, 3),
+      findings: snapshot.config.focus === "criativos" && taxonomyHighlights.length > 0
+        ? [facts[0], ...taxonomyHighlights].slice(0, 3)
+        : facts.slice(0, 3),
       actionsTaken,
       nextSteps,
       outlook: [

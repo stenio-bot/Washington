@@ -1,5 +1,6 @@
 import type {
   CampaignMetricSummary,
+  CreativeAnalysis,
   EvidenceMetric,
   MetricComparison,
   MetricKey,
@@ -12,6 +13,12 @@ import type {
   ReportObjective,
 } from "./types";
 import { assessPerformance, buildContextEvidence } from "./performance";
+import {
+  classifyAdTaxonomy,
+  TAXONOMY_CONVENTION,
+  TAXONOMY_RULES_VERSION,
+  taxonomyLabel,
+} from "./taxonomy";
 
 export const metricKeys: MetricKey[] = [
   "spend",
@@ -81,7 +88,7 @@ function sumPresent(rows: RawMetricRow[], key: keyof RawMetricRow) {
   return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
 }
 
-function rawToMetrics(rows: RawMetricRow[], objective: ReportObjective): MetricValues {
+export function rawToMetrics(rows: RawMetricRow[], objective: ReportObjective): MetricValues {
   const spend = sumPresent(rows, "spend");
   const impressions = sumPresent(rows, "impressions");
   const reach = sumPresent(rows, "reach");
@@ -212,6 +219,102 @@ function buildCampaigns(
     .sort((a, b) => (b.current.spend ?? 0) - (a.current.spend ?? 0));
 }
 
+function emptyCoverage(): CreativeAnalysis["coverage"]["audience"] {
+  return {
+    eligibleAds: 0,
+    classifiedAds: 0,
+    totalSpend: null,
+    classifiedSpend: null,
+    rateByAds: null,
+    rateBySpend: null,
+    eligibleForNarrative: false,
+  };
+}
+
+function buildCreativeAnalysis(
+  config: ReportConfig,
+  raw: RawMetaSnapshot,
+): CreativeAnalysis {
+  if (config.taxonomyMode === "disabled") {
+    return {
+      mode: "disabled",
+      rulesVersion: TAXONOMY_RULES_VERSION,
+      convention: TAXONOMY_CONVENTION,
+      audience: [],
+      format: [],
+      coverage: { audience: emptyCoverage(), format: emptyCoverage() },
+    };
+  }
+
+  const creativeByAd = new Map((raw.creatives ?? []).map((item) => [item.adId, item]));
+  const currentAds = raw.current.filter((row) => row.level === "ad");
+  const previousAds = raw.previous.filter((row) => row.level === "ad");
+
+  function classifiedRows(rows: RawMetricRow[], dimension: "audience" | "format") {
+    return rows.map((row) => {
+      const creative = creativeByAd.get(row.adId ?? row.entityId);
+      return { row, classification: classifyAdTaxonomy(row, creative)[dimension] };
+    });
+  }
+
+  function buildDimension(dimension: "audience" | "format") {
+    const current = classifiedRows(currentAds, dimension);
+    const previous = classifiedRows(previousAds, dimension);
+    const keys = new Set([
+      ...current.map((item) => item.classification.value),
+      ...previous.map((item) => item.classification.value),
+    ]);
+    const summaries = [...keys]
+      .map((key) => {
+        const currentRows = current.filter((item) => item.classification.value === key).map((item) => item.row);
+        const previousRows = previous.filter((item) => item.classification.value === key).map((item) => item.row);
+        const currentMetrics = rawToMetrics(currentRows, config.objective);
+        const previousMetrics = rawToMetrics(previousRows, config.objective);
+        const totalSpend = sumPresent(currentAds, "spend");
+        return {
+          dimension,
+          key,
+          label: taxonomyLabel(key),
+          current: currentMetrics,
+          previous: previousMetrics,
+          comparisons: comparisons(currentMetrics, previousMetrics),
+          shareOfSpend: safeDivide(currentMetrics.spend, totalSpend),
+          adCount: new Set(currentRows.map((row) => row.adId ?? row.entityId)).size,
+        };
+      })
+      .sort((a, b) => (b.current.spend ?? 0) - (a.current.spend ?? 0));
+
+    const classified = current.filter((item) => item.classification.status === "explicit");
+    const totalSpend = sumPresent(currentAds, "spend");
+    const classifiedSpend = sumPresent(classified.map((item) => item.row), "spend");
+    const rateByAds = current.length === 0 ? null : classified.length / current.length;
+    const rateBySpend = safeDivide(classifiedSpend, totalSpend);
+    return {
+      summaries,
+      coverage: {
+        eligibleAds: current.length,
+        classifiedAds: classified.length,
+        totalSpend,
+        classifiedSpend,
+        rateByAds,
+        rateBySpend,
+        eligibleForNarrative: rateBySpend !== null && rateBySpend >= 0.7,
+      },
+    };
+  }
+
+  const audience = buildDimension("audience");
+  const format = buildDimension("format");
+  return {
+    mode: "strict",
+    rulesVersion: TAXONOMY_RULES_VERSION,
+    convention: TAXONOMY_CONVENTION,
+    audience: audience.summaries,
+    format: format.summaries,
+    coverage: { audience: audience.coverage, format: format.coverage },
+  };
+}
+
 export function formatMetric(metric: MetricKey, value: number | null, currency: string) {
   if (value === null || !Number.isFinite(value)) return "—";
   if (currencyMetrics.has(metric)) {
@@ -244,6 +347,7 @@ function buildEvidence(
   metrics: MetricValues,
   allComparisons: Record<MetricKey, MetricComparison>,
   campaigns: CampaignMetricSummary[],
+  creativeAnalysis: CreativeAnalysis,
   accountId: string,
   accountName: string,
   currency: string,
@@ -289,6 +393,26 @@ function buildEvidence(
       };
     }
   }
+  for (const breakdown of [...creativeAnalysis.audience, ...creativeAnalysis.format]) {
+    for (const key of metricKeys) {
+      const ref = `breakdown.${breakdown.dimension}.${breakdown.key}.${key}`;
+      const comparison = breakdown.comparisons[key];
+      evidence[ref] = {
+        ref,
+        label: metricLabels[key],
+        metric: key,
+        scope: "breakdown",
+        entityId: `${breakdown.dimension}:${breakdown.key}`,
+        entityName: breakdown.label,
+        current: breakdown.current[key],
+        previous: breakdown.previous[key],
+        percentChange: comparison.percentChange,
+        formattedCurrent: formatMetric(key, breakdown.current[key], currency),
+        formattedPrevious: formatMetric(key, breakdown.previous[key], currency),
+        formattedPercentChange: formatChange(comparison.percentChange),
+      };
+    }
+  }
   return evidence;
 }
 
@@ -296,6 +420,7 @@ function assessQuality(
   config: ReportConfig,
   raw: RawMetaSnapshot,
   metrics: MetricValues,
+  creativeAnalysis: CreativeAnalysis,
 ): NormalizedSnapshot["quality"] {
   const alerts: QualityAlert[] = [];
   const required: MetricKey[] =
@@ -352,6 +477,25 @@ function assessQuality(
     });
   }
 
+  if (config.taxonomyMode === "strict") {
+    const coverageValues = Object.values(creativeAnalysis.coverage);
+    if (coverageValues.every((coverage) => coverage.eligibleAds === 0)) {
+      alerts.push({
+        code: "missing_ad_level_data",
+        severity: config.focus === "criativos" ? "warning" : "info",
+        message: "A fonte não retornou dados no nível de anúncio; a leitura por público e formato foi omitida.",
+        affectedMetrics: [],
+      });
+    } else if (coverageValues.some((coverage) => !coverage.eligibleForNarrative)) {
+      alerts.push({
+        code: "low_taxonomy_coverage",
+        severity: config.focus === "criativos" ? "warning" : "info",
+        message: "A nomenclatura não atingiu a cobertura mínima do investimento em todos os recortes; conclusões incompletas foram bloqueadas.",
+        affectedMetrics: [],
+      });
+    }
+  }
+
   for (const warning of raw.warnings) {
     alerts.push({
       code: "source_warning",
@@ -396,17 +540,34 @@ export async function normalizeSnapshot(
     config.objective,
     metrics,
   );
+  const creativeAnalysis = buildCreativeAnalysis(config, raw);
   const sourceHash = await sha256(JSON.stringify({ raw, config }));
   const evidence = buildEvidence(
     metrics,
     allComparisons,
     campaigns,
+    creativeAnalysis,
     raw.account.id,
     raw.account.name,
     raw.account.currency,
   );
 
   const contextEvidence = buildContextEvidence(config);
+  if (creativeAnalysis.mode === "strict") {
+    for (const dimension of ["audience", "format"] as const) {
+      const coverage = creativeAnalysis.coverage[dimension];
+      const label = dimension === "audience" ? "público" : "formato";
+      const rate = coverage.rateBySpend === null
+        ? "indisponível"
+        : `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(coverage.rateBySpend * 100)}%`;
+      contextEvidence[`taxonomy.coverage.${dimension}`] = {
+        ref: `taxonomy.coverage.${dimension}`,
+        label: `Cobertura da nomenclatura por ${label}`,
+        text: `A nomenclatura classificou ${rate} do investimento no recorte de ${label}.`,
+        source: "system",
+      };
+    }
+  }
   const baseSnapshot = {
     id: crypto.randomUUID(),
     source: raw.source,
@@ -418,9 +579,10 @@ export async function normalizeSnapshot(
     previousMetrics,
     comparisons: allComparisons,
     campaigns,
+    creativeAnalysis,
     evidence,
     contextEvidence,
-    quality: assessQuality(config, raw, metrics),
+    quality: assessQuality(config, raw, metrics, creativeAnalysis),
     sourceWarnings: raw.warnings,
   };
   return {

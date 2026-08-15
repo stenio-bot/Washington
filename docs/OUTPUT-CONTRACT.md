@@ -70,6 +70,22 @@ O JSON retornado pela LLM deve conter:
 
 Toda afirmação recebe `evidenceRefs`. Números escritos devem existir nas evidências citadas. A validação bloqueia a exportação se houver referência inexistente, número não verificável, promessa de recuperação ou exposição de pendência interna.
 
+## Leitura por público e criativo
+
+A análise usa o padrão descrito em `docs/NAMING-CONVENTION.md`.
+
+- A classificação é determinística e acontece antes da LLM.
+- Público é derivado prioritariamente do nome do conjunto; formato, do nome do anúncio.
+- Nomes ambíguos ou sem token conhecido ficam como `não classificado`.
+- O output mostra investimento, resultados e eficiência por grupo.
+- Um recorte só entra na narrativa quando a nomenclatura cobre ao menos 70% do investimento.
+- A versão interna mostra a cobertura e os itens não classificados; a versão para cliente omite conclusões quando a cobertura é insuficiente.
+- A nomenclatura não comprova targeting, visual da peça ou causalidade.
+
+Frase aceitável: “Pela nomenclatura, público frio concentrou X de investimento e registrou Y de eficiência.”
+
+Frase bloqueada: “O público frio causou a queda.”
+
 ## Status operacional
 
 - `aplicado`: execução confirmada pela equipe;
@@ -98,6 +114,8 @@ Frase bloqueada: “Restam dias suficientes para recuperar o resultado.”
 - Alterar o estado manualmente registra a origem manual e não altera métricas.
 - Nenhuma ação aparece como concluída sem confirmação da equipe.
 - Nenhuma pendência interna aparece na versão para cliente.
+- Nenhum recorte de público ou formato aparece sem cobertura e evidência suficientes.
+- Nomes ambíguos permanecem não classificados; a LLM não pode reclassificá-los.
 - Cada recomendação tem justificativa, risco e forma de validação.
 - O PDF possui exatamente cinco páginas e corresponde à prévia aprovada.
 - A exportação é bloqueada quando a validação factual falha.
@@ -110,4 +128,3 @@ Frase bloqueada: “Restam dias suficientes para recuperar o resultado.”
 4. Manter métricas e classificação fora da LLM.
 5. Retornar erros acionáveis para conta, período, permissão, Meta, LLM e validação.
 6. Garantir histórico por cliente e reexportação da versão aprovada.
-

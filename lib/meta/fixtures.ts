@@ -180,6 +180,34 @@ const leadsPrevious: RawMetricRow[] = [
   },
 ];
 
+const ecommerceAdNames = [
+  { audience: "[FRIO] Broad", ad: "[FRIO] [VIDEO] Oferta principal 01" },
+  { audience: "[RMKT] Visitantes 30d", ad: "[RMKT] [CARROSSEL] Produtos vistos 01" },
+  { audience: "[FRIO] Prospecting", ad: "[FRIO] [REELS] Prova social 02" },
+  { audience: "[QUENTE] Carrinho", ad: "[QUENTE] [CATALOGO] Always On 01" },
+];
+
+const leadsAdNames = [
+  { audience: "[FRIO] Broad", ad: "[FRIO] [VIDEO] Formulário 01" },
+  { audience: "[RMKT] Engajados", ad: "[RMKT] [STATIC] WhatsApp 01" },
+  { audience: "[MORNO] LAL", ad: "[MORNO] [REELS] Depoimento 01" },
+];
+
+function adRows(rows: RawMetricRow[], names: Array<{ audience: string; ad: string }>) {
+  return rows.map((row, index) => ({
+    ...row,
+    level: "ad" as const,
+    entityId: `ad_${row.entityId}`,
+    entityName: names[index].ad,
+    campaignId: row.entityId,
+    campaignName: row.entityName,
+    adsetId: `adset_${row.entityId}`,
+    adsetName: names[index].audience,
+    adId: `ad_${row.entityId}`,
+    adName: names[index].ad,
+  }));
+}
+
 export function fixtureConfig(objective: ReportObjective): ReportConfig {
   const ecommerce = objective === "ecommerce";
   return {
@@ -195,6 +223,7 @@ export function fixtureConfig(objective: ReportObjective): ReportConfig {
     focus: "geral",
     audience: "client",
     performanceStatus: "auto",
+    taxonomyMode: "strict",
     context: ecommerce
       ? "O cliente realizou uma promoção sazonal durante a segunda quinzena."
       : "A qualidade comercial dos leads ainda precisa ser validada no CRM.",
@@ -228,8 +257,21 @@ export function fixtureSnapshot(objective: ReportObjective): RawMetaSnapshot {
     },
     period: config.period,
     comparisonPeriod: config.comparisonPeriod,
-    current: objective === "ecommerce" ? ecommerceCurrent : leadsCurrent,
-    previous: objective === "ecommerce" ? ecommercePrevious : leadsPrevious,
+    current: objective === "ecommerce"
+      ? [...ecommerceCurrent, ...adRows(ecommerceCurrent, ecommerceAdNames)]
+      : [...leadsCurrent, ...adRows(leadsCurrent, leadsAdNames)],
+    previous: objective === "ecommerce"
+      ? [...ecommercePrevious, ...adRows(ecommercePrevious, ecommerceAdNames)]
+      : [...leadsPrevious, ...adRows(leadsPrevious, leadsAdNames)],
+    creatives: (objective === "ecommerce" ? ecommerceAdNames : leadsAdNames).map((item, index) => ({
+      adId: objective === "ecommerce" ? `ad_cmp_ecom_${index + 1}` : `ad_cmp_leads_${index + 1}`,
+      adName: item.ad,
+      campaignId: objective === "ecommerce" ? `cmp_ecom_${index + 1}` : `cmp_leads_${index + 1}`,
+      adsetId: objective === "ecommerce" ? `adset_cmp_ecom_${index + 1}` : `adset_cmp_leads_${index + 1}`,
+      creativeId: `creative_${objective}_${index + 1}`,
+      creativeName: item.ad,
+      thumbnailUrl: null,
+    })),
     rawReference: `fixture://${objective}/2026-07`,
     warnings: [],
   };
